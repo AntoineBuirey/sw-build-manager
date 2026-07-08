@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+build-output/
+
+# Environment variables
+.env
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# SSL certificates
+# Certificates are managed on the deployment servers
+# They should not be committed to git
+certs/*.cert
+certs/*.key
+certs/*.pem
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+definitions/
