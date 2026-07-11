@@ -1,12 +1,15 @@
 import express, { Request, Response } from "express";
+import fs from "fs";
+import path from "path";
 
 import { BaseApp } from "./base_app";
 import { logRequest, requireAuth } from "./middlewares";
 
-import { get_uptime, Environment, hashPassword, DateTime, parseDateTimeSafe } from "./utility/utils";
+import { get_uptime, Environment, hashPassword, DateTime, parseDateTimeSafe, rootDirectory } from "./utility/utils";
 import { logger } from './utility/logger';
 import { version } from "./utility/package";
 import { ValueError } from "./utility/exceptions";
+import { SqliteStore } from "./database/sqlite_store";
 
 declare module 'express-session' {
     interface SessionData {
@@ -19,12 +22,30 @@ declare module 'express-session' {
  */
 export class App extends BaseApp {
     private public_dir: string;
+    private store: SqliteStore;
 
     constructor(sslOptions: any, port: number, environment: Environment, public_dir: string) {
         super(sslOptions, port, environment);
         this.public_dir = public_dir;
+        const dataDir = path.join(rootDirectory, "data");
+        fs.mkdirSync(dataDir, { recursive: true });
+        this.store = new SqliteStore(path.join(dataDir, "sw-build-manager.sqlite"));
 
         this.configure();
+    }
+
+    public async openStore(): Promise<void> {
+        await this.store.connect();
+        logger.info("SQLite store connected");
+    }
+
+    public async closeStore(): Promise<void> {
+        await this.store.close();
+        logger.info("SQLite store closed");
+    }
+
+    public getStore(): SqliteStore {
+        return this.store;
     }
 
     public setupMiddlewares(): void {

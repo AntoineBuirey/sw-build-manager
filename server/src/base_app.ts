@@ -56,7 +56,7 @@ export abstract class BaseApp{
     public startServer(): void{
         this.server.listen(this.port, () => {
             logger.info(`Server started successfully on port: ${this.port}`);
-            logger.info(`HTTPS URL: https://localhost:${this.port}/`);
+            logger.info(`URL: http(s)://localhost:${this.port}/`);
             logger.info(`Environment: ${this.environment}`);
         });
     }
