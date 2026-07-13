@@ -1,13 +1,15 @@
 import sqlite3 from "sqlite3";
 import { Database, open } from "sqlite";
 
-import { Creation } from "../models/creation";
-import { CreationType } from "../models/creation_type";
-import { Usage } from "../models/creation_usage";
-import { Manufacturer } from "../models/manufacturer";
-import { Microcontroller } from "../models/microcontroller";
-import { Operator } from "../models/operator";
-import { Status } from "../models/status";
+// import { Creation } from "../models/creation";
+// import { CreationType } from "../models/creation_type";
+// import { Usage } from "../models/creation_usage";
+// import { Manufacturer } from "../models/manufacturer";
+// import { Microcontroller } from "../models/microcontroller";
+// import { Operator } from "../models/operator";
+// import { Status } from "../models/status";
+import { Creation, CreationType, Usage, Manufacturer, Microcontroller, Operator, Status } from "../models";
+import { TYPE_MAP, USAGE_MAP } from "../utility/code_mapping";
 
 type SqliteDatabase = Database<sqlite3.Database, sqlite3.Statement>;
 
@@ -26,6 +28,7 @@ interface OperatorRow {
 }
 
 interface CreationRow {
+    id: number;
     name: string;
     code: string;
     description: string;
@@ -35,15 +38,18 @@ interface CreationRow {
     creation_date: number;
     status: number;
     last_update: number;
-    manufacturer_name: string;
-    manufacturer_description: string;
-    manufacturer_logo: string;
-    operator_name: string;
-    operator_description: string;
-    operator_logo: string;
+    manufacturer_id: number | null;
+    manufacturer_name: string | null;
+    manufacturer_description: string | null;
+    manufacturer_logo: string | null;
+    operator_id: number | null;
+    operator_name: string | null;
+    operator_description: string | null;
+    operator_logo: string | null;
 }
 
 interface MicrocontrollerRow {
+    id: number;
     name: string;
     description: string;
     workshop_link: string;
@@ -72,6 +78,7 @@ export class SqliteStore {
 
         await this.db.exec("PRAGMA foreign_keys = ON;");
         await this.initializeSchema();
+        await this.migrateNullableCreationRelations();
     }
 
     async close(): Promise<void> {
@@ -142,8 +149,24 @@ export class SqliteStore {
     async saveCreation(creation: Creation): Promise<void> {
         const db = this.requireDb();
 
-        const manufacturerId = await this.saveManufacturer(creation.manufacturer);
-        const operatorId = await this.saveOperator(creation.operator);
+        if (!creation.code) {
+            // create it as follow: letter for type + letter for usage + 4 digits incrementing at each creation of the same type and usage
+            let codePrefix = TYPE_MAP[creation.type] + USAGE_MAP[creation.usage];
+
+            // get the last code with the same prefix
+            const lastCodeRow = await db.get<{ last_code: string | null }>(
+                "SELECT code AS last_code FROM creations WHERE code LIKE ? ORDER BY code DESC LIMIT 1",
+                codePrefix + "%",
+            );
+
+            let nextNumber = 1;
+            if (lastCodeRow && lastCodeRow.last_code) {
+                const lastNumber = parseInt(lastCodeRow.last_code.slice(-4), 10);
+                nextNumber = lastNumber + 1;
+            }
+
+            creation.code = codePrefix + nextNumber.toString().padStart(4, "0");
+        }
 
         await db.run(
             `
@@ -177,8 +200,8 @@ export class SqliteStore {
             creation.code,
             creation.description,
             creation.workshop_link,
-            manufacturerId,
-            operatorId,
+            creation.manufacturer ? creation.manufacturer.id : null,
+            creation.operator ? creation.operator.id : null,
             creation.type,
             creation.usage,
             creation.creation_date.getTime(),
@@ -223,7 +246,7 @@ export class SqliteStore {
             "SELECT id, name, description, logo FROM manufacturers ORDER BY name",
         );
 
-        return rows.map((row) => new Manufacturer(row.name, row.description, row.logo));
+        return rows.map((row) => new Manufacturer(row.id, row.name, row.description, row.logo));
     }
 
     async getOperators(): Promise<Operator[]> {
@@ -232,7 +255,7 @@ export class SqliteStore {
             "SELECT id, name, description, logo FROM operators ORDER BY name",
         );
 
-        return rows.map((row) => new Operator(row.name, row.description, row.logo));
+        return rows.map((row) => new Operator(row.id, row.name, row.description, row.logo));
     }
 
     async getCreations(): Promise<Creation[]> {
@@ -240,6 +263,7 @@ export class SqliteStore {
         const rows = await db.all<CreationRow[]>(
             `
             SELECT
+                c.id,
                 c.name,
                 c.code,
                 c.description,
@@ -249,32 +273,43 @@ export class SqliteStore {
                 c.creation_date,
                 c.status,
                 c.last_update,
+                m.id AS manufacturer_id,
                 m.name AS manufacturer_name,
                 m.description AS manufacturer_description,
                 m.logo AS manufacturer_logo,
+                o.id AS operator_id,
                 o.name AS operator_name,
                 o.description AS operator_description,
                 o.logo AS operator_logo
             FROM creations c
-            INNER JOIN manufacturers m ON c.manufacturer_id = m.id
-            INNER JOIN operators o ON c.operator_id = o.id
+            LEFT JOIN manufacturers m ON c.manufacturer_id = m.id
+            LEFT JOIN operators o ON c.operator_id = o.id
             ORDER BY c.name
             `,
         );
 
         return rows.map((row) => {
-            const manufacturer = new Manufacturer(
-                row.manufacturer_name,
-                row.manufacturer_description,
-                row.manufacturer_logo,
-            );
-            const operator = new Operator(
-                row.operator_name,
-                row.operator_description,
-                row.operator_logo,
-            );
+            const manufacturer =
+                row.manufacturer_id === null || row.manufacturer_name === null || row.manufacturer_description === null || row.manufacturer_logo === null
+                    ? null
+                    : new Manufacturer(
+                          row.manufacturer_id,
+                          row.manufacturer_name,
+                          row.manufacturer_description,
+                          row.manufacturer_logo,
+                      );
+            const operator =
+                row.operator_id === null || row.operator_name === null || row.operator_description === null || row.operator_logo === null
+                    ? null
+                    : new Operator(
+                          row.operator_id,
+                          row.operator_name,
+                          row.operator_description,
+                          row.operator_logo,
+                      );
 
             return new Creation(
+                row.id,
                 row.name,
                 row.code,
                 row.description,
@@ -309,6 +344,7 @@ export class SqliteStore {
         return rows.map(
             (row) =>
                 new Microcontroller(
+                    row.id,
                     row.name,
                     row.description,
                     row.workshop_link,
@@ -351,8 +387,8 @@ export class SqliteStore {
                 code TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL,
                 workshop_link TEXT NOT NULL,
-                manufacturer_id INTEGER NOT NULL,
-                operator_id INTEGER NOT NULL,
+                manufacturer_id INTEGER,
+                operator_id INTEGER,
                 type INTEGER NOT NULL,
                 usage INTEGER NOT NULL,
                 creation_date INTEGER NOT NULL,
@@ -372,6 +408,74 @@ export class SqliteStore {
                 last_update INTEGER NOT NULL
             );
         `);
+    }
+
+    private async migrateNullableCreationRelations(): Promise<void> {
+        const db = this.requireDb();
+        const columns = await db.all<{ name: string; notnull: number }[]>("PRAGMA table_info(creations);");
+
+        const manufacturerColumn = columns.find((column) => column.name === "manufacturer_id");
+        const operatorColumn = columns.find((column) => column.name === "operator_id");
+
+        if (!manufacturerColumn || !operatorColumn || (manufacturerColumn.notnull === 0 && operatorColumn.notnull === 0)) {
+            return;
+        }
+
+        await db.exec("PRAGMA foreign_keys = OFF;");
+        await db.exec(`
+            BEGIN TRANSACTION;
+            ALTER TABLE creations RENAME TO creations_old;
+
+            CREATE TABLE creations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                code TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL,
+                workshop_link TEXT NOT NULL,
+                manufacturer_id INTEGER,
+                operator_id INTEGER,
+                type INTEGER NOT NULL,
+                usage INTEGER NOT NULL,
+                creation_date INTEGER NOT NULL,
+                status INTEGER NOT NULL,
+                last_update INTEGER NOT NULL,
+                FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE RESTRICT,
+                FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT
+            );
+
+            INSERT INTO creations (
+                id,
+                name,
+                code,
+                description,
+                workshop_link,
+                manufacturer_id,
+                operator_id,
+                type,
+                usage,
+                creation_date,
+                status,
+                last_update
+            )
+            SELECT
+                id,
+                name,
+                code,
+                description,
+                workshop_link,
+                manufacturer_id,
+                operator_id,
+                type,
+                usage,
+                creation_date,
+                status,
+                last_update
+            FROM creations_old;
+
+            DROP TABLE creations_old;
+            COMMIT;
+        `);
+        await db.exec("PRAGMA foreign_keys = ON;");
     }
 
     private static statusToInt(status: Status): number {

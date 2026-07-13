@@ -1,5 +1,6 @@
 
 export enum Usage {
+    UNKNOWN,
     SEARCH_AND_RESCUE,
     FIRE_FIGHTING,
     TRANSPORT,

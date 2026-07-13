@@ -20,11 +20,3 @@ export function logRequest(req: Request, _: Response, next: NextFunction) {
     logger.info(`Received ${method} request on ${url} :\nTimestamp: ${timestamp}\nclient IP: ${req.ip}`);
     next();
 };
-
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-    if (req.session && req.session.user) {
-        next();
-    } else {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-    }
-}

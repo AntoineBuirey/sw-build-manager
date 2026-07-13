@@ -4,21 +4,24 @@ import { CreationType } from "./creation_type";
 import { Usage } from "./creation_usage";
 import { Status } from "./status";
 
+
 export class Creation {
+    id: number;
     name: string;
     code: string;
     description: string;
     workshop_link: string;
-    manufacturer: Manufacturer;
-    operator: Operator;
+    manufacturer: Manufacturer | null;
+    operator: Operator | null;
     type: CreationType;
     usage: Usage;
     creation_date: Date;
     status: Status;
     last_update: Date;
 
-    constructor(name: string, code: string, description: string, workshop_link: string, manufacturer: Manufacturer, operator: Operator,
+    constructor(id: number, name: string, code: string, description: string, workshop_link: string, manufacturer: Manufacturer | null, operator: Operator | null,
         type: CreationType, usage: Usage, creation_date: Date, status: Status, last_update: Date) {
+        this.id = id;
         this.name = name;
         this.code = code;
         this.description = description;

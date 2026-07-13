@@ -1,5 +1,6 @@
 
 export enum CreationType {
+    UNKNOWN,
     AIRCRAFT,
     BOAT,
     GROUND_VEHICLE,
