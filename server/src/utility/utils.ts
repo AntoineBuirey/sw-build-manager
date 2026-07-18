@@ -62,3 +62,7 @@ export function checkUri(uri: string): Promise<boolean> {
 		request.end();
 	});
 }
+
+export function Pascal2SnakeCase(str: string): string {
+	return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+}

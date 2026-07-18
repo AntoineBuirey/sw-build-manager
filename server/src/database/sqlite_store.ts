@@ -1,62 +1,21 @@
 import sqlite3 from "sqlite3";
 import { Database, open } from "sqlite";
+import fs from "fs";
+import crypto from "crypto";
 
-// import { Creation } from "../models/creation";
-// import { CreationType } from "../models/creation_type";
-// import { Usage } from "../models/creation_usage";
-// import { Manufacturer } from "../models/manufacturer";
-// import { Microcontroller } from "../models/microcontroller";
-// import { Operator } from "../models/operator";
-// import { Status } from "../models/status";
-import { Creation, CreationType, Usage, Manufacturer, Microcontroller, Operator, Status } from "../models";
-import { TYPE_MAP, USAGE_MAP } from "../utility/code_mapping";
+import {
+    Creation, CreationCode, CreationLite, CreationId,
+    CreationType, Usage, Status,
+    Manufacturer, ManufacturerId,
+    Microcontroller, MicrocontrollerId,
+    Operator, OperatorId
+} from "../models";
+import { logger } from "../utility/logger";
+
+
 
 type SqliteDatabase = Database<sqlite3.Database, sqlite3.Statement>;
 
-interface ManufacturerRow {
-    id: number;
-    name: string;
-    description: string;
-    logo: string;
-}
-
-interface OperatorRow {
-    id: number;
-    name: string;
-    description: string;
-    logo: string;
-}
-
-interface CreationRow {
-    id: number;
-    name: string;
-    code: string;
-    description: string;
-    workshop_link: string;
-    type: number;
-    usage: number;
-    creation_date: number;
-    status: number;
-    last_update: number;
-    manufacturer_id: number | null;
-    manufacturer_name: string | null;
-    manufacturer_description: string | null;
-    manufacturer_logo: string | null;
-    operator_id: number | null;
-    operator_name: string | null;
-    operator_description: string | null;
-    operator_logo: string | null;
-}
-
-interface MicrocontrollerRow {
-    id: number;
-    name: string;
-    description: string;
-    workshop_link: string;
-    creation_date: number;
-    status: number;
-    last_update: number;
-}
 
 export class SqliteStore {
     private dbPath: string;
@@ -78,7 +37,6 @@ export class SqliteStore {
 
         await this.db.exec("PRAGMA foreign_keys = ON;");
         await this.initializeSchema();
-        await this.migrateNullableCreationRelations();
     }
 
     async close(): Promise<void> {
@@ -90,271 +48,6 @@ export class SqliteStore {
         this.db = undefined;
     }
 
-    async saveManufacturer(manufacturer: Manufacturer): Promise<number> {
-        const db = this.requireDb();
-
-        await db.run(
-            `
-            INSERT INTO manufacturers (name, description, logo)
-            VALUES (?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                description = excluded.description,
-                logo = excluded.logo
-            `,
-            manufacturer.name,
-            manufacturer.description,
-            manufacturer.logo,
-        );
-
-        const row = await db.get<{ id: number }>(
-            "SELECT id FROM manufacturers WHERE name = ?",
-            manufacturer.name,
-        );
-
-        if (!row) {
-            throw new Error("Failed to persist manufacturer.");
-        }
-
-        return row.id;
-    }
-
-    async saveOperator(operator: Operator): Promise<number> {
-        const db = this.requireDb();
-
-        await db.run(
-            `
-            INSERT INTO operators (name, description, logo)
-            VALUES (?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                description = excluded.description,
-                logo = excluded.logo
-            `,
-            operator.name,
-            operator.description,
-            operator.logo,
-        );
-
-        const row = await db.get<{ id: number }>(
-            "SELECT id FROM operators WHERE name = ?",
-            operator.name,
-        );
-
-        if (!row) {
-            throw new Error("Failed to persist operator.");
-        }
-
-        return row.id;
-    }
-
-    async saveCreation(creation: Creation): Promise<void> {
-        const db = this.requireDb();
-
-        if (!creation.code) {
-            // create it as follow: letter for type + letter for usage + 4 digits incrementing at each creation of the same type and usage
-            let codePrefix = TYPE_MAP[creation.type] + USAGE_MAP[creation.usage];
-
-            // get the last code with the same prefix
-            const lastCodeRow = await db.get<{ last_code: string | null }>(
-                "SELECT code AS last_code FROM creations WHERE code LIKE ? ORDER BY code DESC LIMIT 1",
-                codePrefix + "%",
-            );
-
-            let nextNumber = 1;
-            if (lastCodeRow && lastCodeRow.last_code) {
-                const lastNumber = parseInt(lastCodeRow.last_code.slice(-4), 10);
-                nextNumber = lastNumber + 1;
-            }
-
-            creation.code = codePrefix + nextNumber.toString().padStart(4, "0");
-        }
-
-        await db.run(
-            `
-            INSERT INTO creations (
-                name,
-                code,
-                description,
-                workshop_link,
-                manufacturer_id,
-                operator_id,
-                type,
-                usage,
-                creation_date,
-                status,
-                last_update
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(code) DO UPDATE SET
-                name = excluded.name,
-                description = excluded.description,
-                workshop_link = excluded.workshop_link,
-                manufacturer_id = excluded.manufacturer_id,
-                operator_id = excluded.operator_id,
-                type = excluded.type,
-                usage = excluded.usage,
-                creation_date = excluded.creation_date,
-                status = excluded.status,
-                last_update = excluded.last_update
-            `,
-            creation.name,
-            creation.code,
-            creation.description,
-            creation.workshop_link,
-            creation.manufacturer ? creation.manufacturer.id : null,
-            creation.operator ? creation.operator.id : null,
-            creation.type,
-            creation.usage,
-            creation.creation_date.getTime(),
-            SqliteStore.statusToInt(creation.status),
-            creation.last_update.getTime(),
-        );
-    }
-
-    async saveMicrocontroller(microcontroller: Microcontroller): Promise<void> {
-        const db = this.requireDb();
-
-        await db.run(
-            `
-            INSERT INTO microcontrollers (
-                name,
-                description,
-                workshop_link,
-                creation_date,
-                status,
-                last_update
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(workshop_link) DO UPDATE SET
-                name = excluded.name,
-                description = excluded.description,
-                creation_date = excluded.creation_date,
-                status = excluded.status,
-                last_update = excluded.last_update
-            `,
-            microcontroller.name,
-            microcontroller.description,
-            microcontroller.workshop_link,
-            microcontroller.creation_date.getTime(),
-            SqliteStore.statusToInt(microcontroller.status),
-            microcontroller.last_update.getTime(),
-        );
-    }
-
-    async getManufacturers(): Promise<Manufacturer[]> {
-        const db = this.requireDb();
-        const rows = await db.all<ManufacturerRow[]>(
-            "SELECT id, name, description, logo FROM manufacturers ORDER BY name",
-        );
-
-        return rows.map((row) => new Manufacturer(row.id, row.name, row.description, row.logo));
-    }
-
-    async getOperators(): Promise<Operator[]> {
-        const db = this.requireDb();
-        const rows = await db.all<OperatorRow[]>(
-            "SELECT id, name, description, logo FROM operators ORDER BY name",
-        );
-
-        return rows.map((row) => new Operator(row.id, row.name, row.description, row.logo));
-    }
-
-    async getCreations(): Promise<Creation[]> {
-        const db = this.requireDb();
-        const rows = await db.all<CreationRow[]>(
-            `
-            SELECT
-                c.id,
-                c.name,
-                c.code,
-                c.description,
-                c.workshop_link,
-                c.type,
-                c.usage,
-                c.creation_date,
-                c.status,
-                c.last_update,
-                m.id AS manufacturer_id,
-                m.name AS manufacturer_name,
-                m.description AS manufacturer_description,
-                m.logo AS manufacturer_logo,
-                o.id AS operator_id,
-                o.name AS operator_name,
-                o.description AS operator_description,
-                o.logo AS operator_logo
-            FROM creations c
-            LEFT JOIN manufacturers m ON c.manufacturer_id = m.id
-            LEFT JOIN operators o ON c.operator_id = o.id
-            ORDER BY c.name
-            `,
-        );
-
-        return rows.map((row) => {
-            const manufacturer =
-                row.manufacturer_id === null || row.manufacturer_name === null || row.manufacturer_description === null || row.manufacturer_logo === null
-                    ? null
-                    : new Manufacturer(
-                          row.manufacturer_id,
-                          row.manufacturer_name,
-                          row.manufacturer_description,
-                          row.manufacturer_logo,
-                      );
-            const operator =
-                row.operator_id === null || row.operator_name === null || row.operator_description === null || row.operator_logo === null
-                    ? null
-                    : new Operator(
-                          row.operator_id,
-                          row.operator_name,
-                          row.operator_description,
-                          row.operator_logo,
-                      );
-
-            return new Creation(
-                row.id,
-                row.name,
-                row.code,
-                row.description,
-                row.workshop_link,
-                manufacturer,
-                operator,
-                row.type as CreationType,
-                row.usage as Usage,
-                new Date(row.creation_date),
-                SqliteStore.intToStatus(row.status),
-                new Date(row.last_update),
-            );
-        });
-    }
-
-    async getMicrocontrollers(): Promise<Microcontroller[]> {
-        const db = this.requireDb();
-        const rows = await db.all<MicrocontrollerRow[]>(
-            `
-            SELECT
-                name,
-                description,
-                workshop_link,
-                creation_date,
-                status,
-                last_update
-            FROM microcontrollers
-            ORDER BY name
-            `,
-        );
-
-        return rows.map(
-            (row) =>
-                new Microcontroller(
-                    row.id,
-                    row.name,
-                    row.description,
-                    row.workshop_link,
-                    new Date(row.creation_date),
-                    SqliteStore.intToStatus(row.status),
-                    new Date(row.last_update),
-                ),
-        );
-    }
-
     private requireDb(): SqliteDatabase {
         if (!this.db) {
             throw new Error("SQLite connection not initialized. Call connect() first.");
@@ -363,119 +56,49 @@ export class SqliteStore {
         return this.db;
     }
 
+    private computeHash(content: string): string {
+        return crypto.createHash("sha256").update(content).digest("hex");
+    }
+
     private async initializeSchema(): Promise<void> {
         const db = this.requireDb();
 
+        // load from init.sql file
+        const initSqlPath = __dirname;
+        logger.debug(`Loading SQL schema from ${initSqlPath}/init.sql`);
+        const initSql = fs.readFileSync(`${initSqlPath}/init.sql`, "utf-8");
+
+        // create a table to track the hash of the init.sql file
         await db.exec(`
-            CREATE TABLE IF NOT EXISTS manufacturers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL,
-                logo TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS operators (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL,
-                logo TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS creations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                code TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL,
-                workshop_link TEXT NOT NULL,
-                manufacturer_id INTEGER,
-                operator_id INTEGER,
-                type INTEGER NOT NULL,
-                usage INTEGER NOT NULL,
-                creation_date INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                last_update INTEGER NOT NULL,
-                FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE RESTRICT,
-                FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT
-            );
-
-            CREATE TABLE IF NOT EXISTS microcontrollers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL,
-                workshop_link TEXT NOT NULL UNIQUE,
-                creation_date INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                last_update INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id INTEGER PRIMARY KEY,
+                hash TEXT NOT NULL
             );
         `);
-    }
 
-    private async migrateNullableCreationRelations(): Promise<void> {
-        const db = this.requireDb();
-        const columns = await db.all<{ name: string; notnull: number }[]>("PRAGMA table_info(creations);");
+        // check if the hash of the init.sql file has changed
+        const currentHash = this.computeHash(initSql);
+        const row = await db.get("SELECT hash FROM schema_version WHERE id = 1");
+        if (!row) {
+            // first time, insert the hash
+            logger.debug("Initializing database schema for the first time");
+            await db.run("INSERT INTO schema_version (id, hash) VALUES (1, ?)", [currentHash]);
+            await db.exec(initSql);
+        } else if (row.hash !== currentHash) {
+            // hash has changed, reinitialize the schema
+            logger.warn("Schema version has changed. You may need to migrate your database. Renaming the existing database and creating a new one.");
+            const backupPath = `${this.dbPath}.backup.${Date.now()}`;
+            await this.close();
+            fs.renameSync(this.dbPath, backupPath);
+            logger.info(`Existing database renamed to ${backupPath}`);
 
-        const manufacturerColumn = columns.find((column) => column.name === "manufacturer_id");
-        const operatorColumn = columns.find((column) => column.name === "operator_id");
-
-        if (!manufacturerColumn || !operatorColumn || (manufacturerColumn.notnull === 0 && operatorColumn.notnull === 0)) {
-            return;
+            await this.connect();
+            const db = this.requireDb();
+            await db.exec(initSql);
+            await db.run("UPDATE schema_version SET hash = ? WHERE id = 1", [currentHash]);
+        } else {
+            logger.debug("Schema version is up to date");
         }
-
-        await db.exec("PRAGMA foreign_keys = OFF;");
-        await db.exec(`
-            BEGIN TRANSACTION;
-            ALTER TABLE creations RENAME TO creations_old;
-
-            CREATE TABLE creations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                code TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL,
-                workshop_link TEXT NOT NULL,
-                manufacturer_id INTEGER,
-                operator_id INTEGER,
-                type INTEGER NOT NULL,
-                usage INTEGER NOT NULL,
-                creation_date INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                last_update INTEGER NOT NULL,
-                FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE RESTRICT,
-                FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT
-            );
-
-            INSERT INTO creations (
-                id,
-                name,
-                code,
-                description,
-                workshop_link,
-                manufacturer_id,
-                operator_id,
-                type,
-                usage,
-                creation_date,
-                status,
-                last_update
-            )
-            SELECT
-                id,
-                name,
-                code,
-                description,
-                workshop_link,
-                manufacturer_id,
-                operator_id,
-                type,
-                usage,
-                creation_date,
-                status,
-                last_update
-            FROM creations_old;
-
-            DROP TABLE creations_old;
-            COMMIT;
-        `);
-        await db.exec("PRAGMA foreign_keys = ON;");
     }
 
     private static statusToInt(status: Status): number {
@@ -506,5 +129,488 @@ export class SqliteStore {
             default:
                 return Status.DEVELOPMENT;
         }
+    }
+
+
+
+    /**
+     * Creates a new creation in the database. Fail if a creation with the same code already exists. Return the id of the newly created creation.
+     * @param creation The creation to create.
+     * @returns The code of the newly created creation.
+     * @throws Error if a creation with the same code already exists.
+     */
+    public async createCreation(creation: Creation): Promise<CreationId> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO creations (name, code, description, workshop_link, manufacturer_id, operator_id, type, usage, creation_date, status, last_update)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        await db.run(query, [
+            creation.name,
+            creation.code,
+            creation.description,
+            creation.workshop_link,
+            creation.manufacturer,
+            creation.operator,
+            creation.type,
+            creation.usage,
+            creation.creation_date.getTime(),
+            SqliteStore.statusToInt(creation.status),
+            creation.last_update.getTime(),
+        ]);
+
+        const row = await db.get("SELECT last_insert_rowid() as id");
+        return row.id as CreationId;
+    }
+
+    /**
+     * Retrieves a creation from the database by its code. Returns null if no creation with the given code exists.
+     * @param code The code of the creation to retrieve.
+     * @returns The creation with the given code, or null if no such creation exists.
+     */
+    public async getCreation(code_or_id: CreationCode | CreationId): Promise<Creation | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM creations WHERE code = ? OR id = ?
+        `;
+
+        const row = await db.get(query, [code_or_id, code_or_id]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new Creation(
+            row.id,
+            row.code,
+            row.name,
+            row.description,
+            row.workshop_link,
+            row.manufacturer_id,
+            row.operator_id,
+            row.type,
+            row.usage,
+            new Date(row.creation_date),
+            SqliteStore.intToStatus(row.status),
+            new Date(row.last_update)
+        );
+    }
+
+    /**
+     * Retrieves all creations from the database. Returns an array of CreationLite objects, which contain only the code, name, type, usage, last_update, and status of each creation.
+     * @returns An array of CreationLite objects representing all creations in the database.
+     * @throws Error if there is an issue retrieving the creations from the database.
+     */
+    public async getAllCreations(): Promise<CreationLite[]> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT id, code, name, type, usage, last_update, status FROM creations
+        `;
+
+        const rows = await db.all(query);
+
+        return rows.map((row) => new CreationLite(
+            row.id,
+            row.code,
+            row.name,
+            row.type,
+            row.usage,
+            new Date(row.last_update),
+            SqliteStore.intToStatus(row.status)
+        ));
+    }
+
+    /**
+     * Updates an existing creation in the database. The creation is identified by its code. If no creation with the given code exists, an error is thrown.
+     * @param creation The creation to update.
+     * @throws Error if no creation with the given code exists.
+     * @throws Error if there is an issue updating the creation in the database.
+     */
+    public async updateCreation(creation: Creation): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            UPDATE creations
+            SET name = ?, description = ?, workshop_link = ?, manufacturer_id = ?, operator_id = ?, type = ?, usage = ?, creation_date = ?, status = ?, last_update = ?
+            WHERE code = ?
+        `;
+
+        await db.run(query, [
+            creation.name,
+            creation.description,
+            creation.workshop_link,
+            creation.manufacturer,
+            creation.operator,
+            creation.type,
+            creation.usage,
+            creation.creation_date.getTime(),
+            SqliteStore.statusToInt(creation.status),
+            creation.last_update.getTime(),
+            creation.code
+        ]);
+    }
+
+    /**
+     * Deletes a creation from the database by its code. If no creation with the given code exists, an error is thrown.
+     * @param code The code of the creation to delete.
+     * @throws Error if no creation with the given code exists.
+     * @throws Error if there is an issue deleting the creation from the database.
+     */
+    public async deleteCreation(code: CreationCode): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM creations WHERE code = ?
+        `;
+
+        await db.run(query, [code]);
+    }
+
+    /**
+     * Creates a new manufacturer in the database. Returns the ID of the newly created manufacturer.
+     * @param manufacturer The manufacturer to create.
+     * @returns The ID of the newly created manufacturer.
+     * @throws Error if there is an issue creating the manufacturer in the database.
+     */
+    public async createManufacturer(manufacturer: Manufacturer): Promise<ManufacturerId> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO manufacturers (name, description, logo)
+            VALUES (?, ?, ?)
+        `;
+
+        const result = await db.run(query, [
+            manufacturer.name,
+            manufacturer.description,
+            manufacturer.logo
+        ]);
+
+        return result.lastID as ManufacturerId;
+    }
+
+    /**
+     * Retrieves a manufacturer from the database by its ID. Returns null if no manufacturer with the given ID exists.
+     * @param id The ID of the manufacturer to retrieve.
+     * @returns The manufacturer with the given ID, or null if no such manufacturer exists.
+     */
+    public async getManufacturer(id: ManufacturerId): Promise<Manufacturer | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM manufacturers WHERE id = ?
+        `;
+
+        const row = await db.get(query, [id]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new Manufacturer(
+            row.id,
+            row.name,
+            row.description,
+            row.logo
+        );
+    }
+
+    /**
+     * Retrieves all manufacturers from the database. Returns an array of Manufacturer objects.
+     * @returns An array of Manufacturer objects representing all manufacturers in the database.
+     * @throws Error if there is an issue retrieving the manufacturers from the database.
+     */
+    public async getAllManufacturers(): Promise<Manufacturer[]> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM manufacturers
+        `;
+
+        const rows = await db.all(query);
+
+        return rows.map((row) => new Manufacturer(
+            row.id,
+            row.name,
+            row.description,
+            row.logo
+        ));
+    }
+
+    /**
+     * Updates an existing manufacturer in the database. The manufacturer is identified by its ID. If no manufacturer with the given ID exists, an error is thrown.
+     * @param manufacturer The manufacturer to update.
+     * @throws Error if no manufacturer with the given ID exists.
+     * @throws Error if there is an issue updating the manufacturer in the database.
+     */
+    public async updateManufacturer(manufacturer: Manufacturer): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            UPDATE manufacturers
+            SET name = ?, description = ?, logo = ?
+            WHERE id = ?
+        `;
+
+        await db.run(query, [
+            manufacturer.name,
+            manufacturer.description,
+            manufacturer.logo,
+            manufacturer.id
+        ]);
+    }
+
+    /**
+     * Deletes a manufacturer from the database by its ID. If no manufacturer with the given ID exists, an error is thrown.
+     * @param id The ID of the manufacturer to delete.
+     * @throws Error if no manufacturer with the given ID exists.
+     * @throws Error if there is an issue deleting the manufacturer from the database.
+     */
+    public async deleteManufacturer(id: ManufacturerId): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM manufacturers WHERE id = ?
+        `;
+
+        await db.run(query, [id]);
+    }
+
+
+    /**
+     * Creates a new microcontroller in the database. Returns the ID of the newly created microcontroller.
+     * @param microcontroller The microcontroller to create.
+     * @returns The ID of the newly created microcontroller.
+     * @throws Error if there is an issue creating the microcontroller in the database.
+     */
+    public async createMicrocontroller(microcontroller: Microcontroller): Promise<MicrocontrollerId> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO microcontrollers (name, description, workshop_link, creation_date, status, last_update)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `;
+
+        const result = await db.run(query, [
+            microcontroller.name,
+            microcontroller.description,
+            microcontroller.workshop_link,
+            microcontroller.creation_date.getTime(),
+            SqliteStore.statusToInt(microcontroller.status),
+            microcontroller.last_update.getTime()
+        ]);
+
+        return result.lastID as MicrocontrollerId;
+    }
+
+    /**
+     * Retrieves a microcontroller from the database by its ID. Returns null if no microcontroller with the given ID exists.
+     * @param id The ID of the microcontroller to retrieve.
+     * @returns The microcontroller with the given ID, or null if no such microcontroller exists.
+     */
+    public async getMicrocontroller(id: MicrocontrollerId): Promise<Microcontroller | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM microcontrollers WHERE id = ?
+        `;
+
+        const row = await db.get(query, [id]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new Microcontroller(
+            row.id,
+            row.name,
+            row.description,
+            row.workshop_link,
+            new Date(row.creation_date),
+            SqliteStore.intToStatus(row.status),
+            new Date(row.last_update)
+        );
+    }
+
+    /**
+     * Retrieves all microcontrollers from the database. Returns an array of Microcontroller objects.
+     * @returns An array of Microcontroller objects representing all microcontrollers in the database.
+     * @throws Error if there is an issue retrieving the microcontrollers from the database.
+     */
+    public async getAllMicrocontrollers(): Promise<Microcontroller[]> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM microcontrollers
+        `;
+
+        const rows = await db.all(query);
+
+        return rows.map((row) => new Microcontroller(
+            row.id,
+            row.name,
+            row.description,
+            row.workshop_link,
+            new Date(row.creation_date),
+            SqliteStore.intToStatus(row.status),
+            new Date(row.last_update)
+        ));
+    }
+
+    /**
+     * Updates an existing microcontroller in the database. The microcontroller is identified by its ID. If no microcontroller with the given ID exists, an error is thrown.
+     * @param microcontroller The microcontroller to update.
+     * @throws Error if no microcontroller with the given ID exists.
+     * @throws Error if there is an issue updating the microcontroller in the database.
+     */
+    public async updateMicrocontroller(microcontroller: Microcontroller): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            UPDATE microcontrollers
+            SET name = ?, description = ?, workshop_link = ?, creation_date = ?, status = ?, last_update = ?
+            WHERE id = ?
+        `;
+
+        await db.run(query, [
+            microcontroller.name,
+            microcontroller.description,
+            microcontroller.workshop_link,
+            microcontroller.creation_date.getTime(),
+            SqliteStore.statusToInt(microcontroller.status),
+            microcontroller.last_update.getTime(),
+            microcontroller.id
+        ]);
+    }
+
+    /**
+     * Deletes a microcontroller from the database by its ID. If no microcontroller with the given ID exists, an error is thrown.
+     * @param id The ID of the microcontroller to delete.
+     * @throws Error if no microcontroller with the given ID exists.
+     * @throws Error if there is an issue deleting the microcontroller from the database.
+     */
+    public async deleteMicrocontroller(id: MicrocontrollerId): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM microcontrollers WHERE id = ?
+        `;
+
+        await db.run(query, [id]);
+    }
+
+
+    /**
+     * Creates a new operator in the database. Returns the ID of the newly created operator.
+     * @param operator The operator to create.
+     * @returns The ID of the newly created operator.
+     * @throws Error if there is an issue creating the operator in the database.
+     */
+    public async createOperator(operator: Operator): Promise<OperatorId> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO operators (name, description, logo)
+            VALUES (?, ?, ?)
+        `;
+
+        const result = await db.run(query, [
+            operator.name,
+            operator.description,
+            operator.logo
+        ]);
+
+        return result.lastID as OperatorId;
+    }
+
+    /**
+     * Retrieves an operator from the database by its ID. Returns null if no operator with the given ID exists.
+     * @param id The ID of the operator to retrieve.
+     * @returns The operator with the given ID, or null if no such operator exists.
+     */
+    public async getOperator(id: OperatorId): Promise<Operator | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM operators WHERE id = ?
+        `;
+
+        const row = await db.get(query, [id]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new Operator(
+            row.id,
+            row.name,
+            row.description,
+            row.logo
+        );
+    }
+
+    /**
+     * Retrieves all operators from the database. Returns an array of Operator objects.
+     * @returns An array of Operator objects representing all operators in the database.
+     * @throws Error if there is an issue retrieving the operators from the database.
+     */
+    public async getAllOperators(): Promise<Operator[]> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM operators
+        `;
+
+        const rows = await db.all(query);
+
+        return rows.map((row) => new Operator(
+            row.id,
+            row.name,
+            row.description,
+            row.logo
+        ));
+    }
+
+    /**
+     * Updates an existing operator in the database. The operator is identified by its ID. If no operator with the given ID exists, an error is thrown.
+     * @param operator The operator to update.
+     * @throws Error if no operator with the given ID exists.
+     * @throws Error if there is an issue updating the operator in the database.
+     */
+    public async updateOperator(operator: Operator): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            UPDATE operators
+            SET name = ?, description = ?, logo = ?
+            WHERE id = ?
+        `;
+
+        await db.run(query, [
+            operator.name,
+            operator.description,
+            operator.logo,
+            operator.id
+        ]);
+    }
+
+    /**
+     * Deletes an operator from the database by its ID. If no operator with the given ID exists, an error is thrown.
+     * @param id The ID of the operator to delete.
+     * @throws Error if no operator with the given ID exists.
+     * @throws Error if there is an issue deleting the operator from the database.
+     */
+    public async deleteOperator(id: OperatorId): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM operators WHERE id = ?
+        `;
+
+        await db.run(query, [id]);
     }
 }

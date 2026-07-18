@@ -51,17 +51,23 @@ The company that operates the creation.
 
 The creation itself.
 
-- **Name** : Name of the creation
-- **Code** : Code of the creation, created automatically from other data
-- **Description** : Description of the creation
-- **Workshop link** : Link to the creation on the workshop if published
-- **Manufacturer** : Company that created the creation
-- **Operator** : Company that operates the creation
-- **Type** : Type of the creation (Aircraft, Boat, Car, Building, etc.)
-- **Usage** : Usage of the creation (SAR, Firefighting, Transport, Fun, etc.)
-- **Creation date** : Date of creation
-- **Status** : Status of the creation (In development, Published, Archived, etc.)
-- **Last update** : Date of the last update of the creation
+- Primary data
+
+  -**Id** : Unique identifier of the creation
+  - **Code** : Code of the creation, created automatically from other data
+  - **Name** : Name of the creation
+  - **Type** : Type of the creation (Aircraft, Boat, Car, Building, etc.)
+  - **Usage** : Usage of the creation (SAR, Firefighting, Transport, Fun, etc.)
+  - **Last update** : Date of the last update of the creation
+  - **Status** : Status of the creation (In development, Published, Archived, etc.)
+
+- Detailed data
+
+  - **Description** : Description of the creation
+  - **Workshop link** : Link to the creation on the workshop if published
+  - **Manufacturer** : Company that created the creation
+  - **Operator** : Company that operates the creation
+  - **Creation date** : Date of creation
 
 ### Microcontroller
 

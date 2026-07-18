@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node dist/server.js | ./node_modules/.bin/bunyan -o short",
     "dev": "ts-node src/server.ts | ./node_modules/.bin/bunyan -o short",
-    "build": "tsc",
+    "build": "tsc && cp src/database/init.sql dist/database/init.sql",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

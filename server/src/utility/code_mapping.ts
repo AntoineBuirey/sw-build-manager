@@ -12,6 +12,9 @@ export const TYPE_MAP: Record<CreationType, string> = {
     [CreationType.UNKNOWN]: "Z"
 };
 
+export type TypeMapLetters = "A" | "O" | "G" | "S" | "B" | "U" | "W" | "Z";
+
+
 export const USAGE_MAP: Record<Usage, string> = {
     [Usage.SEARCH_AND_RESCUE]: "R",
     [Usage.FIRE_FIGHTING]: "F",
@@ -29,3 +32,5 @@ export const USAGE_MAP: Record<Usage, string> = {
     [Usage.TOURISM]: "O",
     [Usage.UNKNOWN]: "Z"
 };
+
+export type UsageMapLetters = "R" | "F" | "T" | "C" | "E" | "X" | "Y" | "V" | "M" | "N" | "I" | "A" | "H" | "O" | "Z";

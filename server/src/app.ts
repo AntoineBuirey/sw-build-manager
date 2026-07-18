@@ -5,12 +5,15 @@ import path from "path";
 import { BaseApp } from "./base_app";
 import { logRequest } from "./middlewares";
 
-import { get_uptime, Environment, hashPassword, rootDirectory } from "./utility/utils";
+import { get_uptime, Environment, hashPassword, rootDirectory, Pascal2SnakeCase } from "./utility/utils";
 import { logger } from './utility/logger';
 import { version } from "./utility/package";
 import { ValueError } from "./utility/exceptions";
 import { SqliteStore } from "./database/sqlite_store";
-import { CreationType, Usage, Creation, Manufacturer, Operator, Microcontroller, Status } from "./models";
+import { CreationType, Usage, Creation, CreationCode, Manufacturer, Operator, Microcontroller, Status } from "./models";
+
+
+const API_PREFIX = '/api/v1';
 
 declare module 'express-session' {
     interface SessionData {
@@ -18,12 +21,19 @@ declare module 'express-session' {
     }
 }
 
+type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+const GET: HTTPMethod = 'GET';
+const POST: HTTPMethod = 'POST';
+const PUT: HTTPMethod = 'PUT';
+const DELETE: HTTPMethod = 'DELETE';
+
 /**
  * This class implements the main application logic, including route handling and middleware setup.
  */
 export class App extends BaseApp {
     private public_dir: string;
     private store: SqliteStore;
+    private routes: { method: HTTPMethod, path: string}[] = [];
 
     constructor(sslOptions: any, port: number, environment: Environment, public_dir: string) {
         super(sslOptions, port, environment);
@@ -57,29 +67,78 @@ export class App extends BaseApp {
         this.app.use(express.urlencoded({ extended: true }));   // Middleware to parse URL-encoded request bodies
     }
 
+    // private registerRoute(method: HTTPMethod, path: string, handler: (req: Request, res: Response) => void): void {
+    //     logger.debug(`Registering route: ${method} ${path}`);
+    //     const expressMethod = method.toLowerCase() as 'get' | 'post' | 'put' | 'delete';
+    //     (this.app as any)[expressMethod](path, handler.bind(this));
+
+    //     this.routes.push({ method, path });
+    // }
+
+    private registerRoute(handler: (req: Request, res: Response) => void, { path, method, args }: { path?: string, method?: HTTPMethod, args?: string[] } = {}): void {
+        const handlerName = handler.name;
+        const match = handlerName.match(/^on(Get|Post|Put|Delete)([A-Z][a-zA-Z0-9]*)$/);
+        if (!match) {
+            throw new Error(`Handler function name "${handlerName}" does not follow the expected pattern "on[Method][Path]"`);
+        }
+
+        if (!method) {
+            method = match[1].toUpperCase() as HTTPMethod;
+        }
+
+        if (!path) {
+            path = '/' + Pascal2SnakeCase(match[2]).replace(/_/g, '/');
+        }
+
+        // Prepend the API prefix to the path if it doesn't already start with it
+        if (!path.startsWith(API_PREFIX)) {
+            path = API_PREFIX + path;
+        }
+
+        if (args && args.length > 0) {
+            const argsPattern = args.map(arg => `:${arg}`).join('/');
+            path = `${path}/${argsPattern}`;
+        }
+
+        logger.debug(`Registering route: ${method} ${path}`);
+        const expressMethod = method.toLowerCase();
+        (this.app as any)[expressMethod](path, handler.bind(this));
+        this.routes.push({ method, path });
+    }
+
     public setupRoutes(): void {
         logger.debug('Setting up routes');
-        this.app.get('/api/v1/info', this.onGetInfo.bind(this));
 
-        this.app.get('/api/v1/creation_types', this.onGetCreationTypes.bind(this));
-        this.app.get('/api/v1/creation_usages', this.onGetCreationUsages.bind(this));
-        this.app.get('/api/v1/statuses', this.onGetStatuses.bind(this));
+        this.registerRoute(this.onGetRoot, {path: API_PREFIX});
+        this.registerRoute(this.onGetInfo);
 
-        this.app.get('/api/v1/creations', this.onGetCreations.bind(this));
-        this.app.get('/api/v1/creation/:id', this.onGetCreation.bind(this));
-        this.app.post('/api/v1/creation', this.onPostCreation.bind(this));
+        this.registerRoute(this.onGetCreationTypes);
+        this.registerRoute(this.onGetCreationUsages);
+        this.registerRoute(this.onGetStatuses);
 
-        this.app.get('/api/v1/manufacturers', this.onGetManufacturers.bind(this));
-        this.app.get('/api/v1/manufacturer/:id', this.onGetManufacturer.bind(this));
-        this.app.post('/api/v1/manufacturer', this.onPostManufacturer.bind(this));
+        this.registerRoute(this.onGetCreations);
+        this.registerRoute(this.onGetCreation, {args: ['code']});
+        this.registerRoute(this.onPostCreation);
+        this.registerRoute(this.onPutCreation, {args: ['code']});
+        this.registerRoute(this.onDeleteCreation, {args: ['code']});
 
-        this.app.get('/api/v1/operators', this.onGetOperators.bind(this));
-        this.app.get('/api/v1/operator/:id', this.onGetOperator.bind(this));
-        this.app.post('/api/v1/operator', this.onPostOperator.bind(this));
+        this.registerRoute(this.onGetManufacturers);
+        this.registerRoute(this.onGetManufacturer, {args: ['id']});
+        this.registerRoute(this.onPostManufacturer);
+        this.registerRoute(this.onPutManufacturer, {args: ['id']});
+        this.registerRoute(this.onDeleteManufacturer, {args: ['id']});
 
-        this.app.get('/api/v1/microcontrollers', this.onGetMicrocontrollers.bind(this));
-        this.app.get('/api/v1/microcontroller/:id', this.onGetMicrocontroller.bind(this));
-        this.app.post('/api/v1/microcontroller', this.onPostMicrocontroller.bind(this));
+        this.registerRoute(this.onGetOperators);
+        this.registerRoute(this.onGetOperator, {args: ['id']});
+        this.registerRoute(this.onPostOperator);
+        this.registerRoute(this.onPutOperator, {args: ['id']});
+        this.registerRoute(this.onDeleteOperator, {args: ['id']});
+
+        this.registerRoute(this.onGetMicrocontrollers);
+        this.registerRoute(this.onGetMicrocontroller, {args: ['id']});
+        this.registerRoute(this.onPostMicrocontroller);
+        this.registerRoute(this.onPutMicrocontroller, {args: ['id']});
+        this.registerRoute(this.onDeleteMicrocontroller, {args: ['id']});
     }
 
 
@@ -104,6 +163,10 @@ export class App extends BaseApp {
             }
         };
         res.json(response);
+    }
+
+    private onGetRoot(_: Request, res: Response): void {
+        res.json(this.routes );
     }
 
 
@@ -139,7 +202,7 @@ export class App extends BaseApp {
 
 
     private onGetCreations(_: Request, res: Response): void {
-        this.store.getCreations()
+        this.store.getAllCreations()
             .then(creations => {
                 res.json(creations);
             })
@@ -150,15 +213,14 @@ export class App extends BaseApp {
     }
 
     private onGetCreation(req: Request, res: Response): void {
-        const creationId = parseInt(req.params.id, 10);
-        if (isNaN(creationId)) {
-            res.status(400).json({ error: 'Invalid creation ID' });
+        const creationCode = req.params.code as CreationCode;
+        if (!creationCode) {
+            res.status(400).json({ error: 'Invalid creation code' });
             return;
         }
 
-        this.store.getCreations()
-            .then(creations => {
-                const creation = creations.find(c => c.id === creationId);
+        this.store.getCreation(creationCode)
+            .then(creation => {
                 if (!creation) {
                     res.status(404).json({ error: 'Creation not found' });
                     return;
@@ -166,7 +228,7 @@ export class App extends BaseApp {
                 res.json(creation);
             })
             .catch(err => {
-                logger.error(`Error fetching creation with ID ${creationId}: ${err}`);
+                logger.error(`Error fetching creation with code ${creationCode}: ${err}`);
                 res.status(500).json({ error: 'Internal server error' });
             });
     }
@@ -183,56 +245,127 @@ export class App extends BaseApp {
 
         // if provided, manufacturer and operator must be existing in the database, otherwise return 400
         // get the manufacturer and operator from the store
-        Promise.all([
-            manufacturer_id ? this.store.getManufacturers().then(manufacturers => manufacturers.find(m => m.id === manufacturer_id)) : Promise.resolve(null),
-            operator_id ? this.store.getOperators().then(operators => operators.find(o => o.id === operator_id)) : Promise.resolve(null)
-        ])
-        .then(([manufacturer, operator]) => {
-            if (manufacturer_id && !manufacturer) {
-                res.status(400).json({ error: 'Manufacturer not found' });
-                logger.warn(`Received POST /api/v1/creation request with invalid manufacturer_id: ${manufacturer_id}`);
-                return;
-            }
-            if (operator_id && !operator) {
-                res.status(400).json({ error: 'Operator not found' });
-                logger.warn(`Received POST /api/v1/creation request with invalid operator_id: ${operator_id}`);
-                return;
-            }
+        const manufacturerId = manufacturer_id ? parseInt(manufacturer_id, 10) : null;
+        const operatorId = operator_id ? parseInt(operator_id, 10) : null;
 
-            const creation = new Creation(
-                0, // id will be set by the database
-                name,
-                code || '',
-                description || '',
-                workshop_link || '',
-                manufacturer || null,
-                operator || null,
-                type || CreationType.UNKNOWN,
-                usage || Usage.UNKNOWN,
-                creation_date ? new Date(creation_date) : new Date(),
-                status || Status.DEVELOPMENT,
-                new Date()
-            );
-
-            this.store.saveCreation(creation)
-                .then(() => {
-                    res.status(201).json({ message: 'Creation saved successfully' });
-                    logger.info(`Creation named "${name}" saved successfully`);
+        if (manufacturerId !== null) {
+            this.store.getManufacturer(manufacturerId)
+                .then(manufacturer => {
+                    if (!manufacturer) {
+                        res.status(400).json({ error: 'Invalid manufacturer ID' });
+                        return;
+                    }
                 })
                 .catch(err => {
-                    logger.error(`Error saving creation: ${err}`);
+                    logger.error(`Error fetching manufacturer with ID ${manufacturerId}: ${err}`);
                     res.status(500).json({ error: 'Internal server error' });
                 });
-        })
-        .catch(err => {
-            logger.error(`Error fetching manufacturer or operator: ${err}`);
-            res.status(500).json({ error: 'Internal server error' });
-        });
+        }
+
+        if (operatorId !== null) {
+            this.store.getOperator(operatorId)
+                .then(operator => {
+                    if (!operator) {
+                        res.status(400).json({ error: 'Invalid operator ID' });
+                        return;
+                    }
+                })
+                .catch(err => {
+                    logger.error(`Error fetching operator with ID ${operatorId}: ${err}`);
+                    res.status(500).json({ error: 'Internal server error' });
+                });
+        }
+
+        const creation = new Creation(
+            0, // id will be set by the database
+            code || null,
+            name,
+            description || '',
+            workshop_link || '',
+            manufacturerId,
+            operatorId,
+            type || CreationType.UNKNOWN,
+            usage || Usage.UNKNOWN,
+            creation_date ? new Date(creation_date) : new Date(),
+            status || Status.DEVELOPMENT,
+            new Date()
+        );
+
+        this.store.createCreation(creation)
+            .then((id) => {
+                res.status(201).json({ message: 'Creation saved successfully', id });
+                logger.info(`Creation saved successfully with id ${id}`);
+            })
+            .catch(err => {
+                logger.error(`Error saving creation: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
+    private onPutCreation(req: Request, res: Response): void {
+        const creationCode = req.params.code as CreationCode;
+        if (!creationCode) {
+            res.status(400).json({ error: 'Invalid creation code' });
+            return;
+        }
+
+        const { name, description, workshop_link, manufacturer_id, operator_id, type, usage, creation_date, status } = req.body;
+
+        this.store.getCreation(creationCode)
+            .then(existingCreation => {
+                if (!existingCreation) {
+                    res.status(404).json({ error: 'Creation not found' });
+                    return;
+                }
+                
+                // Update the existing creation with new values
+                existingCreation.name = name || existingCreation.name;
+                existingCreation.description = description || existingCreation.description;
+                existingCreation.workshop_link = workshop_link || existingCreation.workshop_link;
+                existingCreation.manufacturer = manufacturer_id ? parseInt(manufacturer_id, 10) : existingCreation.manufacturer;
+                existingCreation.operator = operator_id ? parseInt(operator_id, 10) : existingCreation.operator;
+                existingCreation.type = type || existingCreation.type;
+                existingCreation.usage = usage || existingCreation.usage;
+                existingCreation.creation_date = creation_date ? new Date(creation_date) : existingCreation.creation_date;
+                existingCreation.status = status || existingCreation.status;
+                existingCreation.last_update = new Date();
+
+                this.store.updateCreation(existingCreation)
+                    .then(() => {
+                        res.json({ message: 'Creation updated successfully' });
+                        logger.info(`Creation with code ${creationCode} updated successfully`);
+                    })
+                    .catch(err => {
+                        logger.error(`Error updating creation with code ${creationCode}: ${err}`);
+                        res.status(500).json({ error: 'Internal server error' });
+                    });
+            })
+            .catch(err => {
+                logger.error(`Error fetching creation with code ${creationCode}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
+    private onDeleteCreation(req: Request, res: Response): void {
+        const creationCode = req.params.code as CreationCode;
+        if (!creationCode) {
+            res.status(400).json({ error: 'Invalid creation code' });
+            return;
+        }
+        this.store.deleteCreation(creationCode)
+            .then(() => {
+                res.json({ message: 'Creation deleted successfully' });
+                logger.info(`Creation with code ${creationCode} deleted successfully`);
+            })
+            .catch(err => {
+                logger.error(`Error deleting creation with code ${creationCode}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
     }
 
 
     private onGetManufacturers(_: Request, res: Response): void {
-        this.store.getManufacturers()
+        this.store.getAllManufacturers()
             .then(manufacturers => {
                 res.json(manufacturers);
             })
@@ -249,9 +382,8 @@ export class App extends BaseApp {
             return;
         }
 
-        this.store.getManufacturers()
-            .then(manufacturers => {
-                const manufacturer = manufacturers.find(m => m.id === manufacturerId);
+        this.store.getManufacturer(manufacturerId)
+            .then(manufacturer => {
                 if (!manufacturer) {
                     res.status(404).json({ error: 'Manufacturer not found' });
                     return;
@@ -280,7 +412,7 @@ export class App extends BaseApp {
             logo || ''
         );
 
-        this.store.saveManufacturer(manufacturer)
+        this.store.createManufacturer(manufacturer)
             .then((id) => {
                 res.status(201).json({ message: 'Manufacturer saved successfully', id });
                 logger.info(`Manufacturer saved successfully: ${JSON.stringify(manufacturer)}`);
@@ -291,9 +423,63 @@ export class App extends BaseApp {
             });
     }
 
+    private onPutManufacturer(req: Request, res: Response): void {
+        const manufacturerId = parseInt(req.params.id, 10);
+        if (isNaN(manufacturerId)) {
+            res.status(400).json({ error: 'Invalid manufacturer ID' });
+            return;
+        }
+
+        const { name, description, logo } = req.body;
+
+        this.store.getManufacturer(manufacturerId)
+            .then(existingManufacturer => {
+                if (!existingManufacturer) {
+                    res.status(404).json({ error: 'Manufacturer not found' });
+                    return;
+                }
+
+                // Update the existing manufacturer with new values
+                existingManufacturer.name = name || existingManufacturer.name;
+                existingManufacturer.description = description || existingManufacturer.description;
+                existingManufacturer.logo = logo || existingManufacturer.logo;
+
+                this.store.updateManufacturer(existingManufacturer)
+                    .then(() => {
+                        res.json({ message: 'Manufacturer updated successfully' });
+                        logger.info(`Manufacturer with ID ${manufacturerId} updated successfully`);
+                    })
+                    .catch(err => {
+                        logger.error(`Error updating manufacturer with ID ${manufacturerId}: ${err}`);
+                        res.status(500).json({ error: 'Internal server error' });
+                    });
+            })
+            .catch(err => {
+                logger.error(`Error fetching manufacturer with ID ${manufacturerId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
+    private onDeleteManufacturer(req: Request, res: Response): void {
+        const manufacturerId = parseInt(req.params.id, 10);
+        if (isNaN(manufacturerId)) {
+            res.status(400).json({ error: 'Invalid manufacturer ID' });
+            return;
+        }
+        this.store.deleteManufacturer(manufacturerId)
+            .then(() => {
+                res.json({ message: 'Manufacturer deleted successfully' });
+                logger.info(`Manufacturer with ID ${manufacturerId} deleted successfully`);
+            })
+            .catch(err => {
+                logger.error(`Error deleting manufacturer with ID ${manufacturerId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
 
     private onGetOperators(_: Request, res: Response): void {
-        this.store.getOperators()
+        this.store.getAllOperators()
             .then(operators => {
                 res.json(operators);
             })
@@ -310,9 +496,8 @@ export class App extends BaseApp {
             return;
         }
 
-        this.store.getOperators()
-            .then(operators => {
-                const operator = operators.find(o => o.id === operatorId);
+        this.store.getOperator(operatorId)
+            .then(operator => {
                 if (!operator) {
                     res.status(404).json({ error: 'Operator not found' });
                     return;
@@ -341,10 +526,10 @@ export class App extends BaseApp {
             logo || ''
         );
 
-        this.store.saveOperator(operator)
+        this.store.createOperator(operator)
             .then((id) => {
                 res.status(201).json({ message: 'Operator saved successfully', id });
-                logger.info(`Operator saved successfully: ${JSON.stringify(operator)}`);
+                logger.info(`Operator saved successfully with ID ${id}`);
             })
             .catch(err => {
                 logger.error(`Error saving operator: ${err}`);
@@ -352,9 +537,63 @@ export class App extends BaseApp {
             });
     }
 
+    private onPutOperator(req: Request, res: Response): void {
+        const operatorId = parseInt(req.params.id, 10);
+        if (isNaN(operatorId)) {
+            res.status(400).json({ error: 'Invalid operator ID' });
+            return;
+        }
+
+        const { name, description, logo } = req.body;
+
+        this.store.getOperator(operatorId)
+            .then(existingOperator => {
+                if (!existingOperator) {
+                    res.status(404).json({ error: 'Operator not found' });
+                    return;
+                }
+
+                // Update the existing operator with new values
+                existingOperator.name = name || existingOperator.name;
+                existingOperator.description = description || existingOperator.description;
+                existingOperator.logo = logo || existingOperator.logo;
+
+                this.store.updateOperator(existingOperator)
+                    .then(() => {
+                        res.json({ message: 'Operator updated successfully' });
+                        logger.info(`Operator with ID ${operatorId} updated successfully`);
+                    })
+                    .catch(err => {
+                        logger.error(`Error updating operator with ID ${operatorId}: ${err}`);
+                        res.status(500).json({ error: 'Internal server error' });
+                    });
+            })
+            .catch(err => {
+                logger.error(`Error fetching operator with ID ${operatorId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
+    private onDeleteOperator(req: Request, res: Response): void {
+        const operatorId = parseInt(req.params.id, 10);
+        if (isNaN(operatorId)) {
+            res.status(400).json({ error: 'Invalid operator ID' });
+            return;
+        }
+        this.store.deleteOperator(operatorId)
+            .then(() => {
+                res.json({ message: 'Operator deleted successfully' });
+                logger.info(`Operator with ID ${operatorId} deleted successfully`);
+            })
+            .catch(err => {
+                logger.error(`Error deleting operator with ID ${operatorId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
 
     private onGetMicrocontrollers(_: Request, res: Response): void {
-        this.store.getMicrocontrollers()
+        this.store.getAllMicrocontrollers()
             .then(microcontrollers => {
                 res.json(microcontrollers);
             })
@@ -371,9 +610,8 @@ export class App extends BaseApp {
             return;
         }
 
-        this.store.getMicrocontrollers()
-            .then(microcontrollers => {
-                const microcontroller = microcontrollers.find(m => m.id === microcontrollerId);
+        this.store.getMicrocontroller(microcontrollerId)
+            .then(microcontroller => {
                 if (!microcontroller) {
                     res.status(404).json({ error: 'Microcontroller not found' });
                     return;
@@ -395,20 +633,24 @@ export class App extends BaseApp {
             return;
         }
 
+        const normalizedWorkshopLink = typeof workshop_link === 'string' && workshop_link.trim() !== ''
+            ? workshop_link.trim()
+            : null;
+
         const microcontroller = new Microcontroller(
             0, // id will be set by the database
             name,
             description || '',
-            workshop_link || '',
+            normalizedWorkshopLink,
             creation_date ? new Date(creation_date) : new Date(),
             status || Status.DEVELOPMENT,
             last_update ? new Date(last_update) : new Date()
         );
 
-        this.store.saveMicrocontroller(microcontroller)
-            .then(() => {
-                res.status(201).json({ message: 'Microcontroller saved successfully' });
-                logger.info(`Microcontroller saved successfully: ${JSON.stringify(microcontroller)}`);
+        this.store.createMicrocontroller(microcontroller)
+            .then((id) => {
+                res.status(201).json({ message: 'Microcontroller saved successfully', id });
+                logger.info(`Microcontroller saved successfully with ID ${id}`);
             })
             .catch(err => {
                 logger.error(`Error saving microcontroller: ${err}`);
@@ -416,4 +658,60 @@ export class App extends BaseApp {
             });
     }
 
+    private onPutMicrocontroller(req: Request, res: Response): void {
+        const microcontrollerId = parseInt(req.params.id, 10);
+        if (isNaN(microcontrollerId)) {
+            res.status(400).json({ error: 'Invalid microcontroller ID' });
+            return;
+        }
+
+        const { name, description, workshop_link, creation_date, status, last_update } = req.body;
+
+        this.store.getMicrocontroller(microcontrollerId)
+            .then(existingMicrocontroller => {
+                if (!existingMicrocontroller) {
+                    res.status(404).json({ error: 'Microcontroller not found' });
+                    return;
+                }
+
+                // Update the existing microcontroller with new values
+                existingMicrocontroller.name = name || existingMicrocontroller.name;
+                existingMicrocontroller.description = description || existingMicrocontroller.description;
+                existingMicrocontroller.workshop_link = workshop_link || existingMicrocontroller.workshop_link;
+                existingMicrocontroller.creation_date = creation_date ? new Date(creation_date) : existingMicrocontroller.creation_date;
+                existingMicrocontroller.status = status || existingMicrocontroller.status;
+                existingMicrocontroller.last_update = last_update ? new Date(last_update) : existingMicrocontroller.last_update;
+
+                this.store.updateMicrocontroller(existingMicrocontroller)
+                    .then(() => {
+                        res.json({ message: 'Microcontroller updated successfully' });
+                        logger.info(`Microcontroller with ID ${microcontrollerId} updated successfully`);
+                    })
+                    .catch(err => {
+                        logger.error(`Error updating microcontroller with ID ${microcontrollerId}: ${err}`);
+                        res.status(500).json({ error: 'Internal server error' });
+                    });
+            })
+            .catch(err => {
+                logger.error(`Error fetching microcontroller with ID ${microcontrollerId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
+
+    private onDeleteMicrocontroller(req: Request, res: Response): void {
+        const microcontrollerId = parseInt(req.params.id, 10);
+        if (isNaN(microcontrollerId)) {
+            res.status(400).json({ error: 'Invalid microcontroller ID' });
+            return;
+        }
+        this.store.deleteMicrocontroller(microcontrollerId)
+            .then(() => {
+                res.json({ message: 'Microcontroller deleted successfully' });
+                logger.info(`Microcontroller with ID ${microcontrollerId} deleted successfully`);
+            })
+            .catch(err => {
+                logger.error(`Error deleting microcontroller with ID ${microcontrollerId}: ${err}`);
+                res.status(500).json({ error: 'Internal server error' });
+            });
+    }
 }

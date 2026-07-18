@@ -13,5 +13,6 @@ dependencies = [
     "idna==3.18",
     "lxml==6.1.1",
     "requests==2.34.2",
-    "urllib3==2.7.0"
+    "urllib3==2.7.0",
+    "python-dotenv-1.2.2"
 ]
