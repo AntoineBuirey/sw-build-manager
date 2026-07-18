@@ -19,7 +19,7 @@
     "express": "^5.2.1",
     "express-session": "^1.19.0",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
     "@angular/cli": "^21.2.6",
