@@ -125,8 +125,8 @@ export class App extends BaseApp {
     public setupRoutes(): void {
         logger.debug('Setting up routes');
 
-        this.registerRoute(this.onGetRoot, {path: API_PREFIX});
-        this.registerRoute(this.onGetInfo);
+        this.registerRoute(this.onGetRoot, {path: API_PREFIX, need_auth: false});
+        this.registerRoute(this.onGetInfo, {need_auth: false});
 
         this.registerRoute(this.onGetCreationTypes);
         this.registerRoute(this.onGetCreationUsages);
