@@ -108,77 +108,148 @@ def get_microcontroller(microcontroller_id: int) -> dict[str, Any]:
     response.raise_for_status()
     return response.json()
 
-if __name__ == "__main__":
-    usages =    get_creation_usages()
-    types =     get_creation_types()
-    statuses =  get_statuses()
+
+
+
+class APIClient:
+    def __init__(self, username: str, password: str):
+        self.username = username
+        self.password = password
+        self.headers = {}
+        
+    def __enter__(self):
+        token = self.login(self.username, self.password)
+        self.headers = {"Authorization": f"Bearer {token}"}
+        return self
+        
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.logout()
+        self.headers = {}
+        
+    def login(self, username: str, password: str) -> str:
+        url = f"{BASE_URL}/login"
+        payload = {
+            "username": username,
+            "password": password
+        }
+        response = reqs.post(url, json=payload, verify=ENFORCE_HTTPS)
+        if response.status_code != 200:
+            raise Exception(f"Login failed: {response.status_code} - {response.json().get('error', 'No message')}")
+        return response.json()['token']
+
+
+    def logout(self) -> None:
+        url = f"{BASE_URL}/logout"
+        response = reqs.post(url, headers=self.headers, verify=ENFORCE_HTTPS)
+        if response.status_code != 200:
+            raise Exception(f"Logout failed: {response.status_code} - {response.json().get('error', 'No message')}")
+        self.headers = {}
+
+    def create_creation(self, name: str, code: str = "", description: str = "", workshop_link: str = "",
+                        manufacturer_id: int | None = None, operator_id: int | None = None,
+                        type: int = 0, usage: int = 0, creation_date: str = "", status: int = 0) -> dict[str, Any]:
+        url = f"{BASE_URL}/creation"
+        payload = {
+            "name": name,
+            "code": code,
+            "description": description,
+            "workshop_link": workshop_link,
+            "manufacturer_id": manufacturer_id,
+            "operator_id": operator_id,
+            "type": type,
+            "usage": usage,
+            "creation_date": creation_date,
+            "status": status
+        }
+        response = reqs.post(url, json=payload, headers=self.headers, verify=ENFORCE_HTTPS)
+        response.raise_for_status()
+        return response.json()
     
-    while True:
-        cmd = input("""Enter command (
-            create_creation,get_creation,
-            create_manufacturer, get_manufacturer,
-            create_microcontroller, get_microcontroller,
-            exit): """)
+    def get_creation(self, creation_id: int) -> dict[str, Any]:
+        url = f"{BASE_URL}/creation/{creation_id}"
+        response = reqs.get(url, headers=self.headers, verify=ENFORCE_HTTPS)
+        response.raise_for_status()
+        return response.json()
+
+if __name__ == "__main__":
+    
+    with APIClient(username="admin", password="admin") as api:
+    
+        api.create_creation(name="Test Creation", description="A test creation", type=1, usage=1, status=1)
+        creation = api.get_creation(creation_id=1)
+        print("Creation details:", json.dumps(creation, indent=4))
+    
+    # usages =    get_creation_usages()
+    # types =     get_creation_types()
+    # statuses =  get_statuses()
+    
+    
+    # while True:
+    #     cmd = input("""Enter command (
+    #         create_creation,get_creation,
+    #         create_manufacturer, get_manufacturer,
+    #         create_microcontroller, get_microcontroller,
+    #         exit): """)
         
-        if cmd == "create_creation":
-            name = input("Enter creation name: ")
-            description = input("Enter creation description: ")
-            workshop_link = input("Enter creation workshop link: ")
-            manufacturer_id = int(input("Enter manufacturer ID (or 0 for None): "))
-            operator_id = int(input("Enter operator ID (or 0 for None): "))
-            type_str = input(f"Enter creation type {types}: ")
-            usage_str = input(f"Enter creation usage {usages}: ")
-            status_str = input(f"Enter creation status {statuses}: ")
+    #     if cmd == "create_creation":
+    #         name = input("Enter creation name: ")
+    #         description = input("Enter creation description: ")
+    #         workshop_link = input("Enter creation workshop link: ")
+    #         manufacturer_id = int(input("Enter manufacturer ID (or 0 for None): "))
+    #         operator_id = int(input("Enter operator ID (or 0 for None): "))
+    #         type_str = input(f"Enter creation type {types}: ")
+    #         usage_str = input(f"Enter creation usage {usages}: ")
+    #         status_str = input(f"Enter creation status {statuses}: ")
 
-            type_int = types.get(type_str.upper(), 0)
-            usage_int = usages.get(usage_str.upper(), 0)
-            status_int = statuses.get(status_str.upper(), 0)
+    #         type_int = types.get(type_str.upper(), 0)
+    #         usage_int = usages.get(usage_str.upper(), 0)
+    #         status_int = statuses.get(status_str.upper(), 0)
 
-            manufacturer_id = manufacturer_id if manufacturer_id != 0 else None
-            operator_id = operator_id if operator_id != 0 else None
+    #         manufacturer_id = manufacturer_id if manufacturer_id != 0 else None
+    #         operator_id = operator_id if operator_id != 0 else None
 
-            creation = create_creation(name, '', description, workshop_link,
-                                       manufacturer_id, operator_id,
-                                       type_int, usage_int, '', status_int)
-            print("Creation created:", json.dumps(creation, indent=4))
+    #         creation = create_creation(name, '', description, workshop_link,
+    #                                    manufacturer_id, operator_id,
+    #                                    type_int, usage_int, '', status_int)
+    #         print("Creation created:", json.dumps(creation, indent=4))
             
-        elif cmd == "get_creation":
-            creation_id = int(input("Enter creation ID: "))
-            creation = get_creation(creation_id)
-            print("Creation details:", json.dumps(creation, indent=4))
+    #     elif cmd == "get_creation":
+    #         creation_id = int(input("Enter creation ID: "))
+    #         creation = get_creation(creation_id)
+    #         print("Creation details:", json.dumps(creation, indent=4))
         
-        elif cmd == "create_manufacturer":
-            name = input("Enter manufacturer name: ")
-            description = input("Enter manufacturer description: ")
-            logo = input("Enter manufacturer logo URL: ")
-            manufacturer = create_manufacturer(name, description, logo)
-            print("Manufacturer created:", json.dumps(manufacturer, indent=4))
+    #     elif cmd == "create_manufacturer":
+    #         name = input("Enter manufacturer name: ")
+    #         description = input("Enter manufacturer description: ")
+    #         logo = input("Enter manufacturer logo URL: ")
+    #         manufacturer = create_manufacturer(name, description, logo)
+    #         print("Manufacturer created:", json.dumps(manufacturer, indent=4))
             
-        elif cmd == "get_manufacturer":
-            manufacturer_id = int(input("Enter manufacturer ID: "))
-            manufacturer = get_manufacturer(manufacturer_id)
-            print("Manufacturer details:", json.dumps(manufacturer, indent=4))
+    #     elif cmd == "get_manufacturer":
+    #         manufacturer_id = int(input("Enter manufacturer ID: "))
+    #         manufacturer = get_manufacturer(manufacturer_id)
+    #         print("Manufacturer details:", json.dumps(manufacturer, indent=4))
         
-        elif cmd == "create_microcontroller":
-            name = input("Enter microcontroller name: ")
-            description = input("Enter microcontroller description: ")
-            workshop_link = input("Enter microcontroller workshop link: ")
-            creation_date = input("Enter microcontroller creation date (YYYY-MM-DD): ")
-            status_str = input(f"Enter microcontroller status {statuses}: ")
+    #     elif cmd == "create_microcontroller":
+    #         name = input("Enter microcontroller name: ")
+    #         description = input("Enter microcontroller description: ")
+    #         workshop_link = input("Enter microcontroller workshop link: ")
+    #         creation_date = input("Enter microcontroller creation date (YYYY-MM-DD): ")
+    #         status_str = input(f"Enter microcontroller status {statuses}: ")
 
-            status_int = statuses.get(status_str, 0)
+    #         status_int = statuses.get(status_str, 0)
 
-            microcontroller = create_microcontroller(name, description, workshop_link,
-                                                     creation_date, status_int)
-            print("Microcontroller created:", json.dumps(microcontroller, indent=4))
+    #         microcontroller = create_microcontroller(name, description, workshop_link,
+    #                                                  creation_date, status_int)
+    #         print("Microcontroller created:", json.dumps(microcontroller, indent=4))
             
-        elif cmd == "get_microcontroller":
-            microcontroller_id = int(input("Enter microcontroller ID: "))
-            microcontroller = get_microcontroller(microcontroller_id)
-            print("Microcontroller details:", json.dumps(microcontroller, indent=4))
+    #     elif cmd == "get_microcontroller":
+    #         microcontroller_id = int(input("Enter microcontroller ID: "))
+    #         microcontroller = get_microcontroller(microcontroller_id)
+    #         print("Microcontroller details:", json.dumps(microcontroller, indent=4))
         
-        elif cmd == "exit":
-            break
+    #     elif cmd == "exit":
+    #         break
         
-        else:
-            print("Unknown command. Please try again.")
+    #     else:
+    #         print("Unknown command. Please try again.")

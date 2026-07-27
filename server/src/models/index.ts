@@ -5,6 +5,8 @@ import { Manufacturer, ManufacturerId } from "./manufacturer";
 import { Operator, OperatorId } from "./operator";
 import { Microcontroller, MicrocontrollerId } from "./microcontroller";
 import { Status } from "./status";
+import { UserName, User } from "./user";
+import { Token, TokenId } from "./auth_token";
 
 export {
     CreationType,
@@ -19,5 +21,9 @@ export {
     CreationId,
     ManufacturerId,
     OperatorId,
-    MicrocontrollerId
+    MicrocontrollerId,
+    UserName,
+    User,
+    Token,
+    TokenId
 };

@@ -38,3 +38,16 @@ CREATE TABLE IF NOT EXISTS microcontrollers (
     status INTEGER NOT NULL,
     last_update INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT NOT NULL UNIQUE PRIMARY KEY,
+    password TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username INTEGER NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expiration_date INTEGER NOT NULL,
+    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+);

@@ -8,24 +8,29 @@ import {
     CreationType, Usage, Status,
     Manufacturer, ManufacturerId,
     Microcontroller, MicrocontrollerId,
-    Operator, OperatorId
+    Operator, OperatorId,
+    UserName, User,
+    Token, TokenId
 } from "../models";
 import { logger } from "../utility/logger";
 
-
+import { DbStore } from "./db_store";
 
 type SqliteDatabase = Database<sqlite3.Database, sqlite3.Statement>;
 
 
-export class SqliteStore {
+export class SqliteStore implements DbStore {
     private dbPath: string;
     private db?: SqliteDatabase;
+    private debug_mode: boolean;
+    private tokenCleanupInterval: NodeJS.Timeout | null = null;
 
-    constructor(dbPath: string) {
+    constructor(dbPath: string, debug_mode: boolean = false) {
         this.dbPath = dbPath;
+        this.debug_mode = debug_mode;
     }
 
-    async connect(): Promise<void> {
+    public async connect(): Promise<void> {
         if (this.db) {
             return;
         }
@@ -37,11 +42,31 @@ export class SqliteStore {
 
         await this.db.exec("PRAGMA foreign_keys = ON;");
         await this.initializeSchema();
+
+        // auto-delete expired auth tokens every minute
+        const cleanupInterval = 60 * 1000; // 1 minute in milliseconds
+
+        const deleteExpiredTokens = async () => {
+            try {
+                await this.deleteExpiredAuthTokens();
+                logger.debug("Expired auth tokens deleted successfully. Next run at: " + new Date(Date.now() + cleanupInterval).toISOString());
+            } catch (error) {
+                logger.error(`Error deleting expired auth tokens: ${error}. Next run at: ` + new Date(Date.now() + cleanupInterval).toISOString());
+            }
+        };
+
+        this.tokenCleanupInterval = setInterval(deleteExpiredTokens, cleanupInterval);
+        deleteExpiredTokens(); // Run immediately on startup
     }
 
-    async close(): Promise<void> {
+    public async close(): Promise<void> {
         if (!this.db) {
             return;
+        }
+
+        if (this.tokenCleanupInterval) {
+            clearInterval(this.tokenCleanupInterval);
+            this.tokenCleanupInterval = null;
         }
 
         await this.db.close();
@@ -66,7 +91,17 @@ export class SqliteStore {
         // load from init.sql file
         const initSqlPath = __dirname;
         logger.debug(`Loading SQL schema from ${initSqlPath}/init.sql`);
-        const initSql = fs.readFileSync(`${initSqlPath}/init.sql`, "utf-8");
+        let initSql = fs.readFileSync(`${initSqlPath}/init.sql`, "utf-8");
+        let initDebugSql = "";
+
+        if (this.debug_mode) {
+            if (fs.existsSync(`${initSqlPath}/init_debug.sql`)) {
+                logger.debug(`Loading SQL debug schema from ${initSqlPath}/init_debug.sql`);
+                initDebugSql = fs.readFileSync(`${initSqlPath}/init_debug.sql`, "utf-8");
+            } else {
+                logger.warn(`Debug mode is enabled, but ${initSqlPath}/init_debug.sql does not exist.`);
+            }
+        }
 
         // create a table to track the hash of the init.sql file
         await db.exec(`
@@ -84,6 +119,12 @@ export class SqliteStore {
             logger.debug("Initializing database schema for the first time");
             await db.run("INSERT INTO schema_version (id, hash) VALUES (1, ?)", [currentHash]);
             await db.exec(initSql);
+            logger.debug("Database schema initialized");
+            if (this.debug_mode && initDebugSql) {
+                logger.debug("Applying debug SQL schema");
+                await db.exec(initDebugSql);
+                logger.debug("Debug SQL schema applied");
+            }
         } else if (row.hash !== currentHash) {
             // hash has changed, reinitialize the schema
             logger.warn("Schema version has changed. You may need to migrate your database. Renaming the existing database and creating a new one.");
@@ -92,10 +133,23 @@ export class SqliteStore {
             fs.renameSync(this.dbPath, backupPath);
             logger.info(`Existing database renamed to ${backupPath}`);
 
-            await this.connect();
+            this.db = await open({
+                filename: this.dbPath,
+                driver: sqlite3.Database,
+            });
+
+            await this.db.exec("PRAGMA foreign_keys = ON;");
             const db = this.requireDb();
+
             await db.exec(initSql);
             await db.run("UPDATE schema_version SET hash = ? WHERE id = 1", [currentHash]);
+            logger.info("Database schema reinitialized with new version");
+
+            if (this.debug_mode && initDebugSql) {
+                logger.debug("Applying debug SQL schema");
+                await db.exec(initDebugSql);
+                logger.debug("Debug SQL schema applied");
+            }
         } else {
             logger.debug("Schema version is up to date");
         }
@@ -133,12 +187,6 @@ export class SqliteStore {
 
 
 
-    /**
-     * Creates a new creation in the database. Fail if a creation with the same code already exists. Return the id of the newly created creation.
-     * @param creation The creation to create.
-     * @returns The code of the newly created creation.
-     * @throws Error if a creation with the same code already exists.
-     */
     public async createCreation(creation: Creation): Promise<CreationId> {
         const db = this.requireDb();
 
@@ -165,11 +213,6 @@ export class SqliteStore {
         return row.id as CreationId;
     }
 
-    /**
-     * Retrieves a creation from the database by its code. Returns null if no creation with the given code exists.
-     * @param code The code of the creation to retrieve.
-     * @returns The creation with the given code, or null if no such creation exists.
-     */
     public async getCreation(code_or_id: CreationCode | CreationId): Promise<Creation | null> {
         const db = this.requireDb();
 
@@ -199,11 +242,6 @@ export class SqliteStore {
         );
     }
 
-    /**
-     * Retrieves all creations from the database. Returns an array of CreationLite objects, which contain only the code, name, type, usage, last_update, and status of each creation.
-     * @returns An array of CreationLite objects representing all creations in the database.
-     * @throws Error if there is an issue retrieving the creations from the database.
-     */
     public async getAllCreations(): Promise<CreationLite[]> {
         const db = this.requireDb();
 
@@ -224,12 +262,6 @@ export class SqliteStore {
         ));
     }
 
-    /**
-     * Updates an existing creation in the database. The creation is identified by its code. If no creation with the given code exists, an error is thrown.
-     * @param creation The creation to update.
-     * @throws Error if no creation with the given code exists.
-     * @throws Error if there is an issue updating the creation in the database.
-     */
     public async updateCreation(creation: Creation): Promise<void> {
         const db = this.requireDb();
 
@@ -254,12 +286,6 @@ export class SqliteStore {
         ]);
     }
 
-    /**
-     * Deletes a creation from the database by its code. If no creation with the given code exists, an error is thrown.
-     * @param code The code of the creation to delete.
-     * @throws Error if no creation with the given code exists.
-     * @throws Error if there is an issue deleting the creation from the database.
-     */
     public async deleteCreation(code: CreationCode): Promise<void> {
         const db = this.requireDb();
 
@@ -270,12 +296,8 @@ export class SqliteStore {
         await db.run(query, [code]);
     }
 
-    /**
-     * Creates a new manufacturer in the database. Returns the ID of the newly created manufacturer.
-     * @param manufacturer The manufacturer to create.
-     * @returns The ID of the newly created manufacturer.
-     * @throws Error if there is an issue creating the manufacturer in the database.
-     */
+
+
     public async createManufacturer(manufacturer: Manufacturer): Promise<ManufacturerId> {
         const db = this.requireDb();
 
@@ -293,11 +315,6 @@ export class SqliteStore {
         return result.lastID as ManufacturerId;
     }
 
-    /**
-     * Retrieves a manufacturer from the database by its ID. Returns null if no manufacturer with the given ID exists.
-     * @param id The ID of the manufacturer to retrieve.
-     * @returns The manufacturer with the given ID, or null if no such manufacturer exists.
-     */
     public async getManufacturer(id: ManufacturerId): Promise<Manufacturer | null> {
         const db = this.requireDb();
 
@@ -319,11 +336,6 @@ export class SqliteStore {
         );
     }
 
-    /**
-     * Retrieves all manufacturers from the database. Returns an array of Manufacturer objects.
-     * @returns An array of Manufacturer objects representing all manufacturers in the database.
-     * @throws Error if there is an issue retrieving the manufacturers from the database.
-     */
     public async getAllManufacturers(): Promise<Manufacturer[]> {
         const db = this.requireDb();
 
@@ -341,12 +353,6 @@ export class SqliteStore {
         ));
     }
 
-    /**
-     * Updates an existing manufacturer in the database. The manufacturer is identified by its ID. If no manufacturer with the given ID exists, an error is thrown.
-     * @param manufacturer The manufacturer to update.
-     * @throws Error if no manufacturer with the given ID exists.
-     * @throws Error if there is an issue updating the manufacturer in the database.
-     */
     public async updateManufacturer(manufacturer: Manufacturer): Promise<void> {
         const db = this.requireDb();
 
@@ -364,12 +370,6 @@ export class SqliteStore {
         ]);
     }
 
-    /**
-     * Deletes a manufacturer from the database by its ID. If no manufacturer with the given ID exists, an error is thrown.
-     * @param id The ID of the manufacturer to delete.
-     * @throws Error if no manufacturer with the given ID exists.
-     * @throws Error if there is an issue deleting the manufacturer from the database.
-     */
     public async deleteManufacturer(id: ManufacturerId): Promise<void> {
         const db = this.requireDb();
 
@@ -381,12 +381,7 @@ export class SqliteStore {
     }
 
 
-    /**
-     * Creates a new microcontroller in the database. Returns the ID of the newly created microcontroller.
-     * @param microcontroller The microcontroller to create.
-     * @returns The ID of the newly created microcontroller.
-     * @throws Error if there is an issue creating the microcontroller in the database.
-     */
+
     public async createMicrocontroller(microcontroller: Microcontroller): Promise<MicrocontrollerId> {
         const db = this.requireDb();
 
@@ -407,11 +402,6 @@ export class SqliteStore {
         return result.lastID as MicrocontrollerId;
     }
 
-    /**
-     * Retrieves a microcontroller from the database by its ID. Returns null if no microcontroller with the given ID exists.
-     * @param id The ID of the microcontroller to retrieve.
-     * @returns The microcontroller with the given ID, or null if no such microcontroller exists.
-     */
     public async getMicrocontroller(id: MicrocontrollerId): Promise<Microcontroller | null> {
         const db = this.requireDb();
 
@@ -436,11 +426,6 @@ export class SqliteStore {
         );
     }
 
-    /**
-     * Retrieves all microcontrollers from the database. Returns an array of Microcontroller objects.
-     * @returns An array of Microcontroller objects representing all microcontrollers in the database.
-     * @throws Error if there is an issue retrieving the microcontrollers from the database.
-     */
     public async getAllMicrocontrollers(): Promise<Microcontroller[]> {
         const db = this.requireDb();
 
@@ -461,12 +446,6 @@ export class SqliteStore {
         ));
     }
 
-    /**
-     * Updates an existing microcontroller in the database. The microcontroller is identified by its ID. If no microcontroller with the given ID exists, an error is thrown.
-     * @param microcontroller The microcontroller to update.
-     * @throws Error if no microcontroller with the given ID exists.
-     * @throws Error if there is an issue updating the microcontroller in the database.
-     */
     public async updateMicrocontroller(microcontroller: Microcontroller): Promise<void> {
         const db = this.requireDb();
 
@@ -487,12 +466,6 @@ export class SqliteStore {
         ]);
     }
 
-    /**
-     * Deletes a microcontroller from the database by its ID. If no microcontroller with the given ID exists, an error is thrown.
-     * @param id The ID of the microcontroller to delete.
-     * @throws Error if no microcontroller with the given ID exists.
-     * @throws Error if there is an issue deleting the microcontroller from the database.
-     */
     public async deleteMicrocontroller(id: MicrocontrollerId): Promise<void> {
         const db = this.requireDb();
 
@@ -504,12 +477,7 @@ export class SqliteStore {
     }
 
 
-    /**
-     * Creates a new operator in the database. Returns the ID of the newly created operator.
-     * @param operator The operator to create.
-     * @returns The ID of the newly created operator.
-     * @throws Error if there is an issue creating the operator in the database.
-     */
+
     public async createOperator(operator: Operator): Promise<OperatorId> {
         const db = this.requireDb();
 
@@ -527,11 +495,6 @@ export class SqliteStore {
         return result.lastID as OperatorId;
     }
 
-    /**
-     * Retrieves an operator from the database by its ID. Returns null if no operator with the given ID exists.
-     * @param id The ID of the operator to retrieve.
-     * @returns The operator with the given ID, or null if no such operator exists.
-     */
     public async getOperator(id: OperatorId): Promise<Operator | null> {
         const db = this.requireDb();
 
@@ -553,11 +516,6 @@ export class SqliteStore {
         );
     }
 
-    /**
-     * Retrieves all operators from the database. Returns an array of Operator objects.
-     * @returns An array of Operator objects representing all operators in the database.
-     * @throws Error if there is an issue retrieving the operators from the database.
-     */
     public async getAllOperators(): Promise<Operator[]> {
         const db = this.requireDb();
 
@@ -575,12 +533,6 @@ export class SqliteStore {
         ));
     }
 
-    /**
-     * Updates an existing operator in the database. The operator is identified by its ID. If no operator with the given ID exists, an error is thrown.
-     * @param operator The operator to update.
-     * @throws Error if no operator with the given ID exists.
-     * @throws Error if there is an issue updating the operator in the database.
-     */
     public async updateOperator(operator: Operator): Promise<void> {
         const db = this.requireDb();
 
@@ -598,12 +550,6 @@ export class SqliteStore {
         ]);
     }
 
-    /**
-     * Deletes an operator from the database by its ID. If no operator with the given ID exists, an error is thrown.
-     * @param id The ID of the operator to delete.
-     * @throws Error if no operator with the given ID exists.
-     * @throws Error if there is an issue deleting the operator from the database.
-     */
     public async deleteOperator(id: OperatorId): Promise<void> {
         const db = this.requireDb();
 
@@ -612,5 +558,159 @@ export class SqliteStore {
         `;
 
         await db.run(query, [id]);
+    }
+
+
+
+    public async createUser(user: User): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO users (username, password)
+            VALUES (?, ?)
+        `;
+
+        await db.run(query, [
+            user.name,
+            user.hashed_password
+        ]);
+    }
+
+    public async getUser(username: UserName): Promise<User | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM users WHERE username = ?
+        `;
+
+        const row = await db.get(query, [username]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new User(
+            row.username,
+            row.password
+        );
+    }
+
+    public async getAllUsers(): Promise<User[]> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT * FROM users
+        `;
+
+        const rows = await db.all(query);
+
+        return rows.map((row) => new User(
+            row.username,
+            row.password
+        ));
+    }
+
+    public async deleteUser(username: UserName): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM users WHERE username = ?
+        `;
+
+        await db.run(query, [username]);
+    }
+
+    public async updateUserPassword(username: UserName, newPassword: string): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            UPDATE users
+            SET password = ?
+            WHERE username = ?
+        `;
+
+        await db.run(query, [newPassword, username]);
+    }
+
+    public async userExists(username: UserName): Promise<boolean> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT 1 FROM users WHERE username = ?
+        `;
+
+        const row = await db.get(query, [username]);
+
+        return !!row;
+    }
+
+
+    public async getUserByAuthToken(authToken: string): Promise<User | null> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT u.username, u.password
+            FROM users u
+            JOIN auth_tokens t ON u.username = t.username
+            WHERE t.token = ? AND t.expiration_date > ?
+        `;
+
+        const row = await db.get(query, [authToken, Date.now()]);
+
+        if (!row) {
+            return null;
+        }
+
+        return new User(
+            row.username,
+            row.password
+        );
+    }
+
+    public async createAuthToken(token: Token): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            INSERT INTO auth_tokens (username, token, expiration_date)
+            VALUES (?, ?, ?)
+        `;
+
+        await db.run(query, [
+            token.username,
+            token.token,
+            token.expiration_date.getTime()
+        ]);
+    }
+
+    public async deleteAuthToken(authToken: string): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM auth_tokens WHERE token = ?
+        `;
+
+        await db.run(query, [authToken]);
+    }
+
+    public async deleteExpiredAuthTokens(): Promise<void> {
+        const db = this.requireDb();
+
+        const query = `
+            DELETE FROM auth_tokens WHERE expiration_date <= ?
+        `;
+
+        await db.run(query, [Date.now()]);
+    }
+
+    public async isAuthTokenValid(authToken: string): Promise<boolean> {
+        const db = this.requireDb();
+
+        const query = `
+            SELECT 1 FROM auth_tokens WHERE token = ? AND expiration_date > ?
+        `;
+
+        const row = await db.get(query, [authToken, Date.now()]);
+
+        return !!row;
     }
 }

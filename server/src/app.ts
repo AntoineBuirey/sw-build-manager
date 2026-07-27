@@ -1,16 +1,18 @@
 import express, { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 
 import { BaseApp } from "./base_app";
-import { logRequest } from "./middlewares";
+import { logRequest, createAuthMiddleware } from "./middlewares";
+import { environConfig } from './environ';
 
-import { get_uptime, Environment, hashPassword, rootDirectory, Pascal2SnakeCase } from "./utility/utils";
+import { get_uptime, Environment, rootDirectory, Pascal2SnakeCase } from "./utility/utils";
 import { logger } from './utility/logger';
 import { version } from "./utility/package";
-import { ValueError } from "./utility/exceptions";
+import { hashPassword, checkPassword } from "./utility/password";
 import { SqliteStore } from "./database/sqlite_store";
-import { CreationType, Usage, Creation, CreationCode, Manufacturer, Operator, Microcontroller, Status } from "./models";
+import { CreationType, Usage, Creation, CreationCode, Manufacturer, Operator, Microcontroller, Status, Token, User } from "./models";
 
 
 const API_PREFIX = '/api/v1';
@@ -20,6 +22,8 @@ declare module 'express-session' {
         user: { email: string, id: number };
     }
 }
+
+type ExpressRegisterMethod = (path: string, ...handlers: ((req: Request, res: Response, next: express.NextFunction) => void)[]) => void;
 
 type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 const GET: HTTPMethod = 'GET';
@@ -33,14 +37,17 @@ const DELETE: HTTPMethod = 'DELETE';
 export class App extends BaseApp {
     private public_dir: string;
     private store: SqliteStore;
-    private routes: { method: HTTPMethod, path: string}[] = [];
+    private routes: { method: HTTPMethod, path: string, need_auth: boolean}[] = [];
+    private authMiddleware: (req: Request, res: Response, next: express.NextFunction) => void;
 
     constructor(sslOptions: any, port: number, environment: Environment, public_dir: string) {
         super(sslOptions, port, environment);
         this.public_dir = public_dir;
         const dataDir = path.join(rootDirectory, "data");
         fs.mkdirSync(dataDir, { recursive: true });
-        this.store = new SqliteStore(path.join(dataDir, "sw-build-manager.sqlite"));
+        this.store = new SqliteStore(path.join(dataDir, "sw-build-manager.sqlite"), this.environment === Environment.Development);
+
+        this.authMiddleware = createAuthMiddleware(this.store);
 
         this.configure();
     }
@@ -67,15 +74,11 @@ export class App extends BaseApp {
         this.app.use(express.urlencoded({ extended: true }));   // Middleware to parse URL-encoded request bodies
     }
 
-    // private registerRoute(method: HTTPMethod, path: string, handler: (req: Request, res: Response) => void): void {
-    //     logger.debug(`Registering route: ${method} ${path}`);
-    //     const expressMethod = method.toLowerCase() as 'get' | 'post' | 'put' | 'delete';
-    //     (this.app as any)[expressMethod](path, handler.bind(this));
 
-    //     this.routes.push({ method, path });
-    // }
-
-    private registerRoute(handler: (req: Request, res: Response) => void, { path, method, args }: { path?: string, method?: HTTPMethod, args?: string[] } = {}): void {
+    private registerRoute(
+        handler: (req: Request, res: Response) => void,
+        { path, method, args, need_auth }: { path?: string, method?: HTTPMethod, args?: string[], need_auth?: boolean } = {}
+    ): void {
         const handlerName = handler.name;
         const match = handlerName.match(/^on(Get|Post|Put|Delete)([A-Z][a-zA-Z0-9]*)$/);
         if (!match) {
@@ -100,10 +103,23 @@ export class App extends BaseApp {
             path = `${path}/${argsPattern}`;
         }
 
+        if (need_auth === undefined) {
+            // Default to true
+            need_auth = true;
+        }
+
+
         logger.debug(`Registering route: ${method} ${path}`);
-        const expressMethod = method.toLowerCase();
-        (this.app as any)[expressMethod](path, handler.bind(this));
-        this.routes.push({ method, path });
+        let expressMethod : ExpressRegisterMethod = (this.app as any)[method.toLowerCase()];
+        expressMethod = expressMethod.bind(this.app);
+
+        if (need_auth) {
+            expressMethod(path, this.authMiddleware.bind(this), handler.bind(this));
+        }
+        else{
+            expressMethod(path, handler.bind(this));
+        }
+        this.routes.push({ method, path, need_auth });
     }
 
     public setupRoutes(): void {
@@ -139,6 +155,15 @@ export class App extends BaseApp {
         this.registerRoute(this.onPostMicrocontroller);
         this.registerRoute(this.onPutMicrocontroller, {args: ['id']});
         this.registerRoute(this.onDeleteMicrocontroller, {args: ['id']});
+
+        this.registerRoute(this.onPostLogin, {need_auth: false});
+        this.registerRoute(this.onPostLogout);
+        if (environConfig.allowRegistration) {
+            this.registerRoute(this.onPostRegister, {need_auth: false});
+        }
+        else{
+            logger.info('User registration is disabled. The /api/v1/register endpoint will not be available.');
+        }
     }
 
 
@@ -167,6 +192,88 @@ export class App extends BaseApp {
 
     private onGetRoot(_: Request, res: Response): void {
         res.json(this.routes );
+    }
+
+
+    private async onPostLogin(req: Request, res: Response): Promise<void> {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            res.status(400).json({ error: 'Username and password are required' });
+            return;
+        }
+        const user = await this.store.getUser(username);
+        if (!user) {
+            res.status(401).json({ error: 'Invalid username or password' });
+            return;
+        }
+        if (!checkPassword(password, user.hashed_password)) {
+            res.status(401).json({ error: 'Invalid username or password' });
+            return;
+        }
+
+        // Generate a new auth token for the user
+        const token = randomUUID();
+
+        const authToken = new Token(
+            0,
+            user.name,
+            token,
+            new Date(Date.now() + environConfig.sessionMaxAge)  // Token valid for 1 hour
+        )
+
+        await this.store.createAuthToken(authToken);
+
+        res.json({ message: 'Login successful', token: token, expires_at: authToken.expiration_date.toISOString() });
+    }
+
+    private async onPostRegister(req: Request, res: Response): Promise<void> {
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            res.status(400).json({ error: 'Username and password are required' });
+            return;
+        }
+
+        const existingUser = await this.store.getUser(username);
+        if (existingUser) {
+            res.status(400).json({ error: 'Username already exists' });
+            return;
+        }
+
+        const hashedPassword = hashPassword(password);
+
+        const newUser = new User(
+            username,
+            hashedPassword
+        );
+
+        await this.store.createUser(newUser);
+
+        res.status(201).json({ message: 'User registered successfully' });
+    }
+
+    private async onPostLogout(req: Request, res: Response): Promise<void> {
+        const authHeader = req.headers['authorization'];
+        if (!authHeader) {
+            res.status(400).json({ error: 'Authorization header is required' });
+            return;
+        }
+
+        const token = authHeader.split(' ')[1]; // Assuming Bearer token format
+        if (!token) {
+            res.status(400).json({ error: 'Token is required in Authorization header' });
+            return;
+        }
+
+        const isValid = await this.store.isAuthTokenValid(token);
+        if (!isValid) {
+            res.status(400).json({ error: 'Invalid token' });
+            return;
+        }
+
+        await this.store.deleteAuthToken(token);
+
+        res.json({ message: 'Logout successful' });
     }
 
 

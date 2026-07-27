@@ -36,6 +36,8 @@ export interface EnvironConfig {
     clientDir: string;
     serverDir: string;
     sessionSecret: string;
+    sessionMaxAge: number; // Optional: session max age in milliseconds
+    allowRegistration: boolean; // Optional: flag to allow or disallow user registration
 }
 
 // Create the environment configuration object by reading values from environment variables, providing default values if not set
@@ -47,4 +49,6 @@ export const environConfig: EnvironConfig = {
     clientDir: getAbsolutePath(process.env.CLIENT_DIR || './public'),
     serverDir: getAbsolutePath(process.env.SERVER_DIR || './app'),
     sessionSecret: process.env.SESSION_SECRET || 'default_session_secret',
+    sessionMaxAge: parseInt(process.env.SESSION_MAX_AGE || '3600000', 10), // Default to 1 hour
+    allowRegistration: process.env.ALLOW_REGISTRATION === 'true', // Default to false if not set
 };

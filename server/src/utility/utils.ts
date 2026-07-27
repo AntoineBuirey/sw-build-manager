@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 
@@ -41,12 +40,6 @@ function getRootDirectory(): string {
 }
 
 export const rootDirectory = getRootDirectory();
-
-
-export function hashPassword(password: string): string {
-	return createHash('sha1').update(password).digest('hex');
-}
-
 
 /**
  * Send a HEAD request to the specified URI and check if it is reachable (returns a 200 OK status code)
