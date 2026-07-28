@@ -1,201 +1,21 @@
-import express, { Request, Response } from "express";
-import fs from "fs";
-import path from "path";
+import { Request, Response } from 'express';
 import { randomUUID } from "crypto";
-
-import { BaseApp } from "./base_app";
-import { logRequest, createAuthMiddleware } from "./middlewares";
-import { environConfig } from './environ';
-
-import { get_uptime, Environment, rootDirectory, Pascal2SnakeCase } from "./utility/utils";
 import { logger } from './utility/logger';
-import { version } from "./utility/package";
-import { hashPassword, checkPassword } from "./utility/password";
-import { SqliteStore } from "./database/sqlite_store";
+import { environConfig } from './environ';
 import { CreationType, Usage, Creation, CreationCode, Manufacturer, Operator, Microcontroller, Status, Token, User } from "./models";
+import { hashPassword, checkPassword } from "./utility/password";
 
+import { EmptyApp } from "./empty_app";
 
-const API_PREFIX = '/api/v1';
-
-declare module 'express-session' {
-    interface SessionData {
-        user: { email: string, id: number };
-    }
-}
-
-type ExpressRegisterMethod = (path: string, ...handlers: ((req: Request, res: Response, next: express.NextFunction) => void)[]) => void;
-
-type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
-const GET: HTTPMethod = 'GET';
-const POST: HTTPMethod = 'POST';
-const PUT: HTTPMethod = 'PUT';
-const DELETE: HTTPMethod = 'DELETE';
 
 /**
- * This class implements the main application logic, including route handling and middleware setup.
+ * This class extends the EmptyApp class and provides concrete implementations for the abstract methods defined in EmptyApp.
+ * It handles specific API endpoints for managing creations, manufacturers, operators, and user authentication.
+ * It is designed to be the main application class that initializes and runs the server with the defined routes and middlewares.
  */
-export class App extends BaseApp {
-    private public_dir: string;
-    private store: SqliteStore;
-    private routes: { method: HTTPMethod, path: string, need_auth: boolean}[] = [];
-    private authMiddleware: (req: Request, res: Response, next: express.NextFunction) => void;
+export class App extends EmptyApp {
 
-    constructor(sslOptions: any, port: number, environment: Environment, public_dir: string) {
-        super(sslOptions, port, environment);
-        this.public_dir = public_dir;
-        const dataDir = path.join(rootDirectory, "data");
-        fs.mkdirSync(dataDir, { recursive: true });
-        this.store = new SqliteStore(path.join(dataDir, "sw-build-manager.sqlite"), this.environment === Environment.Development);
-
-        this.authMiddleware = createAuthMiddleware(this.store);
-
-        this.configure();
-    }
-
-    public async openStore(): Promise<void> {
-        await this.store.connect();
-        logger.info("SQLite store connected");
-    }
-
-    public async closeStore(): Promise<void> {
-        await this.store.close();
-        logger.info("SQLite store closed");
-    }
-
-    public getStore(): SqliteStore {
-        return this.store;
-    }
-
-    public setupMiddlewares(): void {
-        logger.debug('Setting up middlewares');
-
-        this.app.use(logRequest);                               // Custom middleware to log incoming requests
-        this.app.use(express.json());                           // Middleware to parse JSON request bodies
-        this.app.use(express.urlencoded({ extended: true }));   // Middleware to parse URL-encoded request bodies
-    }
-
-
-    private registerRoute(
-        handler: (req: Request, res: Response) => void,
-        { path, method, args, need_auth }: { path?: string, method?: HTTPMethod, args?: string[], need_auth?: boolean } = {}
-    ): void {
-        const handlerName = handler.name;
-        const match = handlerName.match(/^on(Get|Post|Put|Delete)([A-Z][a-zA-Z0-9]*)$/);
-        if (!match) {
-            throw new Error(`Handler function name "${handlerName}" does not follow the expected pattern "on[Method][Path]"`);
-        }
-
-        if (!method) {
-            method = match[1].toUpperCase() as HTTPMethod;
-        }
-
-        if (!path) {
-            path = '/' + Pascal2SnakeCase(match[2]).replace(/_/g, '/');
-        }
-
-        // Prepend the API prefix to the path if it doesn't already start with it
-        if (!path.startsWith(API_PREFIX)) {
-            path = API_PREFIX + path;
-        }
-
-        if (args && args.length > 0) {
-            const argsPattern = args.map(arg => `:${arg}`).join('/');
-            path = `${path}/${argsPattern}`;
-        }
-
-        if (need_auth === undefined) {
-            // Default to true
-            need_auth = true;
-        }
-
-
-        logger.debug(`Registering route: ${method} ${path}`);
-        let expressMethod : ExpressRegisterMethod = (this.app as any)[method.toLowerCase()];
-        expressMethod = expressMethod.bind(this.app);
-
-        if (need_auth) {
-            expressMethod(path, this.authMiddleware.bind(this), handler.bind(this));
-        }
-        else{
-            expressMethod(path, handler.bind(this));
-        }
-        this.routes.push({ method, path, need_auth });
-    }
-
-    public setupRoutes(): void {
-        logger.debug('Setting up routes');
-
-        this.registerRoute(this.onGetRoot, {path: API_PREFIX, need_auth: false});
-        this.registerRoute(this.onGetInfo, {need_auth: false});
-
-        this.registerRoute(this.onGetCreationTypes);
-        this.registerRoute(this.onGetCreationUsages);
-        this.registerRoute(this.onGetStatuses);
-
-        this.registerRoute(this.onGetCreations);
-        this.registerRoute(this.onGetCreation, {args: ['code']});
-        this.registerRoute(this.onPostCreation);
-        this.registerRoute(this.onPutCreation, {args: ['code']});
-        this.registerRoute(this.onDeleteCreation, {args: ['code']});
-
-        this.registerRoute(this.onGetManufacturers);
-        this.registerRoute(this.onGetManufacturer, {args: ['id']});
-        this.registerRoute(this.onPostManufacturer);
-        this.registerRoute(this.onPutManufacturer, {args: ['id']});
-        this.registerRoute(this.onDeleteManufacturer, {args: ['id']});
-
-        this.registerRoute(this.onGetOperators);
-        this.registerRoute(this.onGetOperator, {args: ['id']});
-        this.registerRoute(this.onPostOperator);
-        this.registerRoute(this.onPutOperator, {args: ['id']});
-        this.registerRoute(this.onDeleteOperator, {args: ['id']});
-
-        this.registerRoute(this.onGetMicrocontrollers);
-        this.registerRoute(this.onGetMicrocontroller, {args: ['id']});
-        this.registerRoute(this.onPostMicrocontroller);
-        this.registerRoute(this.onPutMicrocontroller, {args: ['id']});
-        this.registerRoute(this.onDeleteMicrocontroller, {args: ['id']});
-
-        this.registerRoute(this.onPostLogin, {need_auth: false});
-        this.registerRoute(this.onPostLogout);
-        if (environConfig.allowRegistration) {
-            this.registerRoute(this.onPostRegister, {need_auth: false});
-        }
-        else{
-            logger.info('User registration is disabled. The /api/v1/register endpoint will not be available.');
-        }
-    }
-
-
-    /**
-     * Handle GET requests to /api/v1/info endpoint
-     */
-    private onGetInfo(req: Request, res: Response): void {
-        let response: any = {
-            request: {
-                method: req.method,
-                url: req.url,
-                headers: req.headers
-            },
-            message: 'sw-build-manager-server HTTPS Server is running',
-            server_info: {
-                uptime: get_uptime(),
-                timestamp: new Date().toISOString(),
-                port: this.port,
-                environment: this.environment,
-                node_version: process.version,
-                version: version
-            }
-        };
-        res.json(response);
-    }
-
-    private onGetRoot(_: Request, res: Response): void {
-        res.json(this.routes );
-    }
-
-
-    private async onPostLogin(req: Request, res: Response): Promise<void> {
+    protected async onPostLogin(req: Request, res: Response): Promise<void> {
         const { username, password } = req.body;
         if (!username || !password) {
             res.status(400).json({ error: 'Username and password are required' });
@@ -226,7 +46,7 @@ export class App extends BaseApp {
         res.json({ message: 'Login successful', token: token, expires_at: authToken.expiration_date.toISOString() });
     }
 
-    private async onPostRegister(req: Request, res: Response): Promise<void> {
+    protected async onPostRegister(req: Request, res: Response): Promise<void> {
         const { username, password } = req.body;
 
         if (!username || !password) {
@@ -252,7 +72,7 @@ export class App extends BaseApp {
         res.status(201).json({ message: 'User registered successfully' });
     }
 
-    private async onPostLogout(req: Request, res: Response): Promise<void> {
+    protected async onPostLogout(req: Request, res: Response): Promise<void> {
         const authHeader = req.headers['authorization'];
         if (!authHeader) {
             res.status(400).json({ error: 'Authorization header is required' });
@@ -277,7 +97,7 @@ export class App extends BaseApp {
     }
 
 
-    private onGetCreationTypes(_: Request, res: Response): void {
+    protected onGetCreationTypes(_: Request, res: Response): void {
         const creationTypes: { [key: string]: number } = {};
         for (const [key, value] of Object.entries(CreationType)) {
             if (typeof value === 'number') {
@@ -287,7 +107,7 @@ export class App extends BaseApp {
         res.json(creationTypes);
     }
 
-    private onGetCreationUsages(_: Request, res: Response): void {
+    protected onGetCreationUsages(_: Request, res: Response): void {
         const creationUsages: { [key: string]: number } = {};
         for (const [key, value] of Object.entries(Usage)) {
             if (typeof value === 'number') {
@@ -297,7 +117,7 @@ export class App extends BaseApp {
         res.json(creationUsages);
     }
 
-    private onGetStatuses(_: Request, res: Response): void {
+    protected onGetStatuses(_: Request, res: Response): void {
         const statuses: { [key: string]: number } = {};
         for (const [key, value] of Object.entries(Status)) {
             if (typeof value === 'number') {
@@ -308,7 +128,7 @@ export class App extends BaseApp {
     }
 
 
-    private onGetCreations(_: Request, res: Response): void {
+    protected onGetCreations(_: Request, res: Response): void {
         this.store.getAllCreations()
             .then(creations => {
                 res.json(creations);
@@ -319,7 +139,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onGetCreation(req: Request, res: Response): void {
+    protected onGetCreation(req: Request, res: Response): void {
         const creationCode = req.params.code as CreationCode;
         if (!creationCode) {
             res.status(400).json({ error: 'Invalid creation code' });
@@ -340,7 +160,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPostCreation(req: Request, res: Response): void {
+    protected onPostCreation(req: Request, res: Response): void {
         const { name, code, description, workshop_link, manufacturer_id, operator_id, type, usage, creation_date, status } = req.body;
 
         // only name is required, other will have default values if not provided
@@ -409,7 +229,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPutCreation(req: Request, res: Response): void {
+    protected onPutCreation(req: Request, res: Response): void {
         const creationCode = req.params.code as CreationCode;
         if (!creationCode) {
             res.status(400).json({ error: 'Invalid creation code' });
@@ -453,7 +273,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onDeleteCreation(req: Request, res: Response): void {
+    protected onDeleteCreation(req: Request, res: Response): void {
         const creationCode = req.params.code as CreationCode;
         if (!creationCode) {
             res.status(400).json({ error: 'Invalid creation code' });
@@ -471,7 +291,7 @@ export class App extends BaseApp {
     }
 
 
-    private onGetManufacturers(_: Request, res: Response): void {
+    protected onGetManufacturers(_: Request, res: Response): void {
         this.store.getAllManufacturers()
             .then(manufacturers => {
                 res.json(manufacturers);
@@ -482,7 +302,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onGetManufacturer(req: Request, res: Response): void {
+    protected onGetManufacturer(req: Request, res: Response): void {
         const manufacturerId = parseInt(req.params.id, 10);
         if (isNaN(manufacturerId)) {
             res.status(400).json({ error: 'Invalid manufacturer ID' });
@@ -503,7 +323,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPostManufacturer(req: Request, res: Response): void {
+    protected onPostManufacturer(req: Request, res: Response): void {
         const { name, description, logo } = req.body;
 
         if (!name) {
@@ -530,7 +350,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPutManufacturer(req: Request, res: Response): void {
+    protected onPutManufacturer(req: Request, res: Response): void {
         const manufacturerId = parseInt(req.params.id, 10);
         if (isNaN(manufacturerId)) {
             res.status(400).json({ error: 'Invalid manufacturer ID' });
@@ -567,7 +387,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onDeleteManufacturer(req: Request, res: Response): void {
+    protected onDeleteManufacturer(req: Request, res: Response): void {
         const manufacturerId = parseInt(req.params.id, 10);
         if (isNaN(manufacturerId)) {
             res.status(400).json({ error: 'Invalid manufacturer ID' });
@@ -585,7 +405,7 @@ export class App extends BaseApp {
     }
 
 
-    private onGetOperators(_: Request, res: Response): void {
+    protected onGetOperators(_: Request, res: Response): void {
         this.store.getAllOperators()
             .then(operators => {
                 res.json(operators);
@@ -596,7 +416,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onGetOperator(req: Request, res: Response): void {
+    protected onGetOperator(req: Request, res: Response): void {
         const operatorId = parseInt(req.params.id, 10);
         if (isNaN(operatorId)) {
             res.status(400).json({ error: 'Invalid operator ID' });
@@ -617,7 +437,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPostOperator(req: Request, res: Response): void {
+    protected onPostOperator(req: Request, res: Response): void {
         const { name, description, logo } = req.body;
 
         if (!name) {
@@ -644,7 +464,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPutOperator(req: Request, res: Response): void {
+    protected onPutOperator(req: Request, res: Response): void {
         const operatorId = parseInt(req.params.id, 10);
         if (isNaN(operatorId)) {
             res.status(400).json({ error: 'Invalid operator ID' });
@@ -681,7 +501,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onDeleteOperator(req: Request, res: Response): void {
+    protected onDeleteOperator(req: Request, res: Response): void {
         const operatorId = parseInt(req.params.id, 10);
         if (isNaN(operatorId)) {
             res.status(400).json({ error: 'Invalid operator ID' });
@@ -699,7 +519,7 @@ export class App extends BaseApp {
     }
 
 
-    private onGetMicrocontrollers(_: Request, res: Response): void {
+    protected onGetMicrocontrollers(_: Request, res: Response): void {
         this.store.getAllMicrocontrollers()
             .then(microcontrollers => {
                 res.json(microcontrollers);
@@ -710,7 +530,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onGetMicrocontroller(req: Request, res: Response): void {
+    protected onGetMicrocontroller(req: Request, res: Response): void {
         const microcontrollerId = parseInt(req.params.id, 10);
         if (isNaN(microcontrollerId)) {
             res.status(400).json({ error: 'Invalid microcontroller ID' });
@@ -731,7 +551,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPostMicrocontroller(req: Request, res: Response): void {
+    protected onPostMicrocontroller(req: Request, res: Response): void {
         const { name, description, workshop_link, creation_date, status, last_update } = req.body;
 
         if (!name) {
@@ -765,7 +585,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onPutMicrocontroller(req: Request, res: Response): void {
+    protected onPutMicrocontroller(req: Request, res: Response): void {
         const microcontrollerId = parseInt(req.params.id, 10);
         if (isNaN(microcontrollerId)) {
             res.status(400).json({ error: 'Invalid microcontroller ID' });
@@ -805,7 +625,7 @@ export class App extends BaseApp {
             });
     }
 
-    private onDeleteMicrocontroller(req: Request, res: Response): void {
+    protected onDeleteMicrocontroller(req: Request, res: Response): void {
         const microcontrollerId = parseInt(req.params.id, 10);
         if (isNaN(microcontrollerId)) {
             res.status(400).json({ error: 'Invalid microcontroller ID' });

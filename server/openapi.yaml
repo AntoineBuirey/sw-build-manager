@@ -1,0 +1,732 @@
+openapi: 3.0.3
+info:
+  title: SW Build Manager API
+  version: 1.0.0
+  description: OpenAPI specification for the SW Build Manager server routes.
+servers:
+  - url: /api/v1
+    description: Relative API endpoint prefix
+paths:
+  /:
+    get:
+      tags:
+        - Info
+      summary: List registered routes
+      responses:
+        '200':
+          description: Route registry
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /info:
+    get:
+      tags:
+        - Info
+      summary: Get server information
+      responses:
+        '200':
+          description: Server metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request:
+                    type: object
+                  message:
+                    type: string
+                  server_info:
+                    type: object
+  /openapi.json:
+    get:
+      tags:
+        - Info
+      summary: Get the OpenAPI document
+      responses:
+        '200':
+          description: OpenAPI document
+          content:
+            application/json:
+              schema:
+                type: object
+  /creation/types:
+    get:
+      tags:
+        - Creations
+      summary: Get creation type enumeration
+      responses:
+        '200':
+          description: Creation types
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+  /creation/usages:
+    get:
+      tags:
+        - Creations
+      summary: Get creation usage enumeration
+      responses:
+        '200':
+          description: Creation usages
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+  /statuses:
+    get:
+      tags:
+        - Creations
+      summary: Get status enumeration
+      responses:
+        '200':
+          description: Statuses
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+  /creations:
+    get:
+      tags:
+        - Creations
+      summary: List creations
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of creations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Creation'
+        '401':
+          description: Unauthorized
+    post:
+      tags:
+        - Creations
+      summary: Create a creation
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreationInput'
+      responses:
+        '201':
+          description: Creation created
+        '400':
+          description: Invalid input
+        '401':
+          description: Unauthorized
+  /creation/{code}:
+    get:
+      tags:
+        - Creations
+      summary: Get one creation by code
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Creation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Creation'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Creation not found
+    put:
+      tags:
+        - Creations
+      summary: Update a creation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreationInput'
+      responses:
+        '200':
+          description: Creation updated
+        '401':
+          description: Unauthorized
+        '404':
+          description: Creation not found
+    delete:
+      tags:
+        - Creations
+      summary: Delete a creation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Creation deleted
+        '401':
+          description: Unauthorized
+        '404':
+          description: Creation not found
+  /manufacturers:
+    get:
+      tags:
+        - Manufacturers
+      summary: List manufacturers
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Manufacturers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Manufacturer'
+        '401':
+          description: Unauthorized
+    post:
+      tags:
+        - Manufacturers
+      summary: Create a manufacturer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManufacturerInput'
+      responses:
+        '201':
+          description: Manufacturer created
+        '400':
+          description: Invalid input
+        '401':
+          description: Unauthorized
+  /manufacturer/{id}:
+    get:
+      tags:
+        - Manufacturers
+      summary: Get one manufacturer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Manufacturer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Manufacturer'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Manufacturer not found
+    put:
+      tags:
+        - Manufacturers
+      summary: Update a manufacturer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManufacturerInput'
+      responses:
+        '200':
+          description: Manufacturer updated
+        '401':
+          description: Unauthorized
+        '404':
+          description: Manufacturer not found
+    delete:
+      tags:
+        - Manufacturers
+      summary: Delete a manufacturer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Manufacturer deleted
+        '401':
+          description: Unauthorized
+        '404':
+          description: Manufacturer not found
+  /operators:
+    get:
+      tags:
+        - Operators
+      summary: List operators
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Operators
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Operator'
+        '401':
+          description: Unauthorized
+    post:
+      tags:
+        - Operators
+      summary: Create an operator
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorInput'
+      responses:
+        '201':
+          description: Operator created
+        '400':
+          description: Invalid input
+        '401':
+          description: Unauthorized
+  /operator/{id}:
+    get:
+      tags:
+        - Operators
+      summary: Get one operator
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Operator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operator'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Operator not found
+    put:
+      tags:
+        - Operators
+      summary: Update an operator
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorInput'
+      responses:
+        '200':
+          description: Operator updated
+        '401':
+          description: Unauthorized
+        '404':
+          description: Operator not found
+    delete:
+      tags:
+        - Operators
+      summary: Delete an operator
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Operator deleted
+        '401':
+          description: Unauthorized
+        '404':
+          description: Operator not found
+  /microcontrollers:
+    get:
+      tags:
+        - Microcontrollers
+      summary: List microcontrollers
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Microcontrollers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Microcontroller'
+        '401':
+          description: Unauthorized
+    post:
+      tags:
+        - Microcontrollers
+      summary: Create a microcontroller
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MicrocontrollerInput'
+      responses:
+        '201':
+          description: Microcontroller created
+        '400':
+          description: Invalid input
+        '401':
+          description: Unauthorized
+  /microcontroller/{id}:
+    get:
+      tags:
+        - Microcontrollers
+      summary: Get one microcontroller
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Microcontroller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Microcontroller'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Microcontroller not found
+    put:
+      tags:
+        - Microcontrollers
+      summary: Update a microcontroller
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MicrocontrollerInput'
+      responses:
+        '200':
+          description: Microcontroller updated
+        '401':
+          description: Unauthorized
+        '404':
+          description: Microcontroller not found
+    delete:
+      tags:
+        - Microcontrollers
+      summary: Delete a microcontroller
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Microcontroller deleted
+        '401':
+          description: Unauthorized
+        '404':
+          description: Microcontroller not found
+  /login:
+    post:
+      tags:
+        - Auth
+      summary: Log in a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+        '400':
+          description: Invalid input
+        '401':
+          description: Invalid credentials
+  /logout:
+    post:
+      tags:
+        - Auth
+      summary: Log out a user
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+        '400':
+          description: Invalid token
+        '401':
+          description: Unauthorized
+  /register:
+    post:
+      tags:
+        - Auth
+      summary: Register a user
+      description: Only available when registration is enabled in the server configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered
+        '400':
+          description: Invalid input or username already exists
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+    Creation:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        workshop_link:
+          type: string
+        manufacturer:
+          type:
+            - integer
+            - 'null'
+        operator:
+          type:
+            - integer
+            - 'null'
+        type:
+          type: integer
+        usage:
+          type: integer
+        creation_date:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        last_update:
+          type: string
+          format: date-time
+    CreationInput:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        workshop_link:
+          type: string
+        manufacturer_id:
+          type: integer
+        operator_id:
+          type: integer
+        type:
+          type: integer
+        usage:
+          type: integer
+        creation_date:
+          type: string
+          format: date-time
+        status:
+          type: integer
+    Manufacturer:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        logo:
+          type: string
+    ManufacturerInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        logo:
+          type: string
+    Operator:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        logo:
+          type: string
+    OperatorInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        logo:
+          type: string
+    Microcontroller:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        workshop_link:
+          type:
+            - string
+            - 'null'
+        creation_date:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        last_update:
+          type: string
+          format: date-time
+    MicrocontrollerInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        workshop_link:
+          type: string
+        creation_date:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        last_update:
+          type: string
+          format: date-time
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string

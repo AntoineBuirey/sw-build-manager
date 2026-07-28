@@ -28,29 +28,26 @@ catch (error) {
 }
 
 
-async function bootstrap(): Promise<void> {
-	try {
-		await app.openStore();
-		app.startServer();
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		logger.fatal(`Failed to initialize server: ${message}`);
-		process.exit(1);
-	}
+try {
+	app.startServer();
+}
+catch (error) {
+	const message = error instanceof Error ? error.message : String(error);
+	logger.fatal(`Failed to start server: ${message}`);
+	process.exit(1);
 }
 
-void bootstrap();
 
 
 // Graceful shutdown when receiving termination signals, from ^C or kill command
 process.on('SIGTERM', () => {
 	logger.info('SIGTERM signal received: closing HTTPS server');
-	void app.closeStore().finally(() => app.stopServer());
+	app.stopServer();
 });
 
 process.on('SIGINT', () => {
 	logger.info('\nSIGINT signal received: closing HTTPS server');
-	void app.closeStore().finally(() => app.stopServer());
+	app.stopServer();
 });
 
 // Export for testing purposes

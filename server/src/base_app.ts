@@ -54,6 +54,7 @@ export abstract class BaseApp{
      * Start the server and listen on the specified port, logging the server URL and environment information
      */
     public startServer(): void{
+        this.onStart();
         this.server.listen(this.port, () => {
             logger.info(`Server started successfully on port: ${this.port}`);
             logger.info(`URL: http(s)://localhost:${this.port}/`);
@@ -65,21 +66,36 @@ export abstract class BaseApp{
      * Stop the server gracefully, ensuring all connections are closed before exiting the process
      */
     public stopServer(): void{
-        this.server.close(() => {
-            logger.info('HTTPS server stopped');
-            process.exit(0);
+        this.onStop().then(() => {
+            this.server.close(() => {
+                logger.info('HTTPS server stopped');
+                process.exit(0);
+            });
         });
     }
 
     /**
      * Abstract method to setup middlewares, must be implemented by child class
      */
-    public abstract setupMiddlewares(): void;
+    protected abstract setupMiddlewares(): void;
 
     /**
      * Abstract method to setup routes, must be implemented by child class
      */
-    public abstract setupRoutes(): void;
+    protected abstract setupRoutes(): void;
+
+    /**
+     * Startup method to perform any additional startup tasks,
+     * can be overridden by child class to do additional startup tasks, such as initializing a database connection or other services
+     */
+    protected async onStart(): Promise<void>{}
+
+    /**
+     * Shutdown method to perform any additional shutdown tasks,
+     * can be overridden by child class to do additional shutdown tasks, such as closing a database connection or other services
+     */
+    protected async onStop(): Promise<void>{}
+
 
     /**
      * Setup error handlers for the server, including handling EADDRINUSE and EACCES errors (port already in use and permission denied errors)
